@@ -1,0 +1,196 @@
+<!--
+  Plantilla HTML - Consola de gestión NIDS
+  Autor:
+-->
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Consola NIDS · ESIME Zacatenco</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+  <!-- Encabezado y controles de conexión -->
+  <header>
+    <div class="marca">
+      <div class="logo">IDS</div>
+      <div>
+        <b>Consola de gestión NIDS</b>
+        <small>ESIME Zacatenco · IPN</small>
+      </div>
+    </div>
+    <span class="pastilla" id="pastilla">
+      <span class="punto"></span>
+      <span id="txtEstado">Desconectado</span>
+    </span>
+    <select id="selInterfaz" title="Tarjeta de red a monitorear">
+      <option>Cargando interfaces…</option>
+    </select>
+    <button id="btnRefrescar" title="Volver a buscar interfaces">↻</button>
+    <button class="exito" id="btnConectar">Conectar</button>
+    <button id="btnProbarDeteccion" class="secundario" title="Simula un escaneo de puertos de prueba para verificar la detección">Probar Detección</button>
+  </header>
+
+  <!-- Navegación por pestañas -->
+  <nav>
+    <button class="activa" data-vista="monitor">Monitor</button>
+    <button data-vista="alertas">Alertas<span class="contador" id="cntAlertas" hidden>0</span></button>
+    <button data-vista="bitacora">Bitácora</button>
+    <button data-vista="puertos">Puertos Locales</button>
+    <button data-vista="config">Configuración</button>
+  </nav>
+
+  <!-- Vistas del sistema -->
+  <main>
+    <!-- Panel de monitorización en tiempo real -->
+    <section class="vista activa" id="monitor">
+      <div class="kpis">
+        <div class="kpi"><span>Paquetes</span><b id="kPaq">0</b></div>
+        <div class="kpi"><span>Datos</span><b id="kBytes">0 B</b></div>
+        <div class="kpi"><span>Paquetes/s</span><b id="kPps">0</b></div>
+        <div class="kpi"><span>Alertas altas</span><b id="kAlta" style="color:var(--alta)">0</b></div>
+        <div class="kpi"><span>Medias / bajas</span><b id="kMedBaja">0 / 0</b></div>
+        <div class="kpi"><span>Tiempo conectado</span><b id="kTiempo">00:00:00</b></div>
+      </div>
+
+      <div class="rejilla">
+        <div class="panel">
+          <h3>Paquetes por segundo (últimos 60 s)</h3>
+          <canvas id="grafica" height="200"></canvas>
+        </div>
+        <div class="panel">
+          <h3>Protocolos</h3>
+          <div id="protocolos"><div class="vacio">Sin datos</div></div>
+        </div>
+      </div>
+
+      <div class="rejilla">
+        <div class="panel">
+          <h3>Tráfico en vivo <button id="btnLimpiar">Limpiar</button></h3>
+          <div class="tabla">
+            <table>
+              <thead>
+                <tr>
+                  <th>Hora</th>
+                  <th>Origen</th>
+                  <th>Destino</th>
+                  <th>Protocolo</th>
+                  <th>Puerto</th>
+                  <th>Tamaño</th>
+                  <th>Info</th>
+                </tr>
+              </thead>
+              <tbody id="tbTrafico">
+                <tr><td colspan="7" class="vacio">Conecta una interfaz para ver el tráfico</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>IPs con más tráfico</h3>
+          <div id="origenes"><div class="vacio">Sin datos</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Lista de alertas detectadas -->
+    <section class="vista" id="alertas">
+      <div id="listaAlertas">
+        <div class="vacio">No hay alertas. Cuando el motor detecte algo aparecerá aquí.</div>
+      </div>
+    </section>
+
+    <!-- Bitácora histórica con filtros -->
+    <section class="vista" id="bitacora">
+      <div class="filtros">
+        <select id="fSev">
+          <option value="">Todas las severidades</option>
+          <option value="alta">Alta</option>
+          <option value="media">Media</option>
+          <option value="baja">Baja</option>
+        </select>
+        <input id="fTexto" placeholder="Buscar IP, tipo o descripción">
+        <button id="btnBuscar">Buscar</button>
+        <button onclick="location.href='/api/bitacora.csv'">Exportar CSV</button>
+      </div>
+      <div class="panel">
+        <div class="tabla" style="max-height:600px">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Fecha</th>
+                <th>Severidad</th>
+                <th>Tipo</th>
+                <th>Método</th>
+                <th>Origen</th>
+                <th>Destino</th>
+                <th>Puerto</th>
+                <th>Descripción</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody id="tbBitacora">
+              <tr><td colspan="10" class="vacio">Sin registros</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VISTA: PUERTOS LOCALES (HOST IDS) -->
+    <section class="vista" id="puertos">
+      <div class="filtros">
+        <select id="fProtoPuerto">
+          <option value="">Todos los protocolos</option>
+          <option value="TCP">TCP</option>
+          <option value="UDP">UDP</option>
+        </select>
+        <input id="fTextoPuerto" placeholder="Buscar por puerto, proceso o servicio...">
+        <button id="btnRefrescarPuertos">↻ Actualizar Puertos</button>
+      </div>
+      <div class="panel">
+        <h3>Puertos en escucha en el equipo y rutas de proceso</h3>
+        <div class="tabla" style="max-height:600px">
+          <table>
+            <thead>
+              <tr>
+                <th>Proto</th>
+                <th>Puerto</th>
+                <th>Rango IANA</th>
+                <th>Proceso</th>
+                <th>PID</th>
+                <th>Servicio</th>
+                <th>Ruta del ejecutable en disco</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody id="tbPuertos">
+              <tr><td colspan="8" class="vacio">Cargando puertos locales...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Parámetros del sistema -->
+    <section class="vista" id="config">
+      <div class="panel">
+        <h3>Parámetros del motor de detección</h3>
+        <div class="form" id="formConfig"></div>
+        <div style="margin-top:16px">
+          <button class="primario" id="btnGuardar">Guardar configuración</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Notificación emergente -->
+  <div class="aviso" id="aviso"></div>
+
+  <!-- Lógica de control -->
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

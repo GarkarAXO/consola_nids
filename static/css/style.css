@@ -1,0 +1,555 @@
+/*
+  Estilos CSS - Consola de gestión NIDS
+  Autor:
+*/
+
+/* Variables de tema claro, paleta institucional y acento esmeralda */
+:root {
+  --fondo: #f4f6f9;
+  --panel: #ffffff;
+  --panel2: #edf1f6;
+  --panel-destacado: #f8fafc;
+  --borde: #dbe2ea;
+  --borde-suave: #eef2f6;
+  --borde-fuerte: #cbd5e1;
+  --texto: #1e293b;
+  --tenue: #64748b;
+  --guinda: #7a1c3d;
+  --guinda2: #9b2c5a;
+  --guinda-suave: rgba(122, 28, 61, 0.08);
+  --esmeralda: #019f6c;
+  --esmeralda-oscuro: #017a53;
+  --esmeralda-suave: rgba(1, 159, 108, 0.12);
+  --alta: #dc2626;
+  --alta-suave: #fee2e2;
+  --alta-texto: #b91c1c;
+  --media: #d97706;
+  --media-suave: #fef3c7;
+  --media-texto: #b45309;
+  --baja: #019f6c;
+  --baja-suave: rgba(1, 159, 108, 0.12);
+  --baja-texto: #017a53;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+/* Reglas generales */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--texto);
+  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Encabezado y marca institucional */
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--borde);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.marca {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: auto;
+}
+
+/* Logo de la consola (editable por CSS mediante background-image o con etiqueta img) */
+.logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background-color: var(--guinda);
+  /* Para definir una imagen de logo desde CSS, descomenta la siguiente propiedad y ajusta la ruta o URL: */
+  /* background-image: url('../img/logo.png'); */
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  color: #ffffff;
+  letter-spacing: 0.05em;
+  user-select: none;
+  border: 1px solid var(--borde);
+  object-fit: contain;
+}
+
+.marca b {
+  font-size: 15px;
+  color: var(--texto);
+  display: block;
+}
+
+.marca small {
+  color: var(--tenue);
+  font-size: 12px;
+}
+
+/* Indicador del estado de conexión */
+.pastilla {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 99px;
+  background: var(--panel2);
+  border: 1px solid var(--borde);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tenue);
+  transition: all 0.25s ease;
+}
+
+.punto {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tenue);
+  transition: background 0.3s;
+}
+
+.on.pastilla {
+  background: var(--esmeralda-suave);
+  border-color: rgba(1, 159, 108, 0.35);
+  color: var(--esmeralda-oscuro);
+}
+
+.on .punto {
+  background: var(--esmeralda);
+  box-shadow: 0 0 0 4px rgba(1, 159, 108, 0.25);
+}
+
+/* Controles interactivos y botones */
+select, input {
+  background: #ffffff;
+  color: var(--texto);
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font: inherit;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+select:focus, input:focus {
+  border-color: var(--guinda);
+  box-shadow: 0 0 0 3px rgba(122, 28, 61, 0.12);
+}
+
+button {
+  background: #ffffff;
+  color: var(--texto);
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+button:hover {
+  border-color: var(--borde-fuerte);
+  background: var(--panel2);
+}
+
+button.primario {
+  background: var(--guinda);
+  color: #ffffff;
+  border-color: var(--guinda);
+}
+
+button.primario:hover {
+  background: var(--guinda2);
+  border-color: var(--guinda2);
+  box-shadow: 0 2px 6px rgba(122, 28, 61, 0.2);
+}
+
+button.exito {
+  background: var(--esmeralda);
+  color: #ffffff;
+  border-color: var(--esmeralda);
+}
+
+button.exito:hover {
+  background: var(--esmeralda-oscuro);
+  border-color: var(--esmeralda-oscuro);
+  box-shadow: 0 2px 6px rgba(1, 159, 108, 0.25);
+}
+
+button.peligro {
+  background: var(--alta-suave);
+  color: var(--alta-texto);
+  border-color: #fecaca;
+}
+
+button.peligro:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+button.secundario {
+  background: transparent;
+  border-color: var(--borde);
+  color: var(--tenue);
+}
+
+button.secundario:hover {
+  color: var(--texto);
+  background: var(--panel2);
+}
+
+/* Barra de navegación */
+nav {
+  display: flex;
+  gap: 6px;
+  padding: 0 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--borde);
+}
+
+nav button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 13px 16px;
+  color: var(--tenue);
+  font-weight: 500;
+}
+
+nav button:hover {
+  color: var(--texto);
+  background: none;
+}
+
+nav button.activa {
+  color: var(--guinda);
+  border-bottom-color: var(--guinda);
+  font-weight: 600;
+}
+
+nav .contador {
+  background: var(--alta);
+  color: #ffffff;
+  border-radius: 99px;
+  padding: 1px 7px;
+  font-size: 11px;
+  margin-left: 6px;
+  font-weight: 600;
+}
+
+/* Estructura de vistas */
+main {
+  padding: 22px 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.vista {
+  display: none;
+}
+
+.vista.activa {
+  display: block;
+}
+
+/* Bloques de métricas numéricas */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.kpi {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  padding: 14px 18px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kpi:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.05);
+}
+
+.kpi span {
+  color: var(--tenue);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.kpi b {
+  display: block;
+  font-size: 26px;
+  margin-top: 6px;
+  color: var(--texto);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* Distribución en rejilla de paneles */
+.rejilla {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  padding: 18px 20px;
+  min-width: 0;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.panel h3 {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--texto);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Elementos gráficos y canvas */
+canvas {
+  width: 100%;
+  display: block;
+  border-radius: 6px;
+}
+
+.barra {
+  display: grid;
+  grid-template-columns: minmax(75px, max-content) 1fr 50px;
+  gap: 10px;
+  align-items: center;
+  margin: 9px 0;
+  font-size: 13px;
+}
+
+.barra div {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel2);
+  overflow: hidden;
+}
+
+/* Barras con distinción cromática (Protocolos en guinda, Orígenes en esmeralda) */
+#protocolos .barra i {
+  display: block;
+  height: 100%;
+  background: var(--guinda2);
+  border-radius: 4px;
+}
+
+#origenes .barra i {
+  display: block;
+  height: 100%;
+  background: var(--esmeralda);
+  border-radius: 4px;
+}
+
+.barra em {
+  font-style: normal;
+  color: var(--tenue);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* Estructura de tablas */
+.tabla {
+  overflow: auto;
+  max-height: 420px;
+  border: 1px solid var(--borde-suave);
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-destacado);
+  text-align: left;
+  color: var(--tenue);
+  font-weight: 600;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--borde);
+  z-index: 1;
+}
+
+td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--borde-suave);
+  color: var(--texto);
+  white-space: nowrap;
+}
+
+tr:hover td {
+  background: #f8fafc;
+}
+
+td.mono, .mono {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+/* Distintivos de severidad */
+.sev {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sev.alta {
+  background: var(--alta-suave);
+  color: var(--alta-texto);
+}
+
+.sev.media {
+  background: var(--media-suave);
+  color: var(--media-texto);
+}
+
+.sev.baja {
+  background: var(--baja-suave);
+  color: var(--baja-texto);
+}
+
+.vacio {
+  color: var(--tenue);
+  text-align: center;
+  padding: 36px 10px;
+}
+
+/* Tarjetas visuales de alerta */
+.alerta {
+  display: grid;
+  grid-template-columns: 5px 1fr auto;
+  gap: 14px;
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  padding: 14px 16px 14px 0;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.alerta .tira {
+  border-radius: 0 4px 4px 0;
+}
+
+.alerta.alta .tira { background: var(--alta); }
+.alerta.media .tira { background: var(--media); }
+.alerta.baja .tira { background: var(--esmeralda); }
+
+.alerta b {
+  font-size: 15px;
+  color: var(--texto);
+}
+
+.alerta p {
+  margin: 5px 0 0;
+  color: var(--tenue);
+}
+
+/* Filtros y formularios */
+.filtros {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.campo label {
+  display: block;
+  color: var(--texto);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.campo input, .campo select {
+  width: 100%;
+}
+
+.campo small {
+  color: var(--tenue);
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+
+/* Aviso emergente con borde de confirmación esmeralda */
+.aviso {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  background: #ffffff;
+  color: var(--texto);
+  border: 1px solid var(--borde);
+  border-left: 4px solid var(--esmeralda);
+  padding: 13px 18px;
+  border-radius: 8px;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.25s, transform 0.25s;
+  max-width: 380px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  z-index: 9999;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.aviso.ver {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+/* Reglas adaptativas */
+@media(max-width: 900px) {
+  .rejilla {
+    grid-template-columns: 1fr;
+  }
+}
