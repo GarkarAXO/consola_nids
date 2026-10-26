@@ -24,6 +24,7 @@ from datetime import datetime
 import psutil
 from flask import Flask, Response, jsonify, render_template, request, session
 
+import db
 import firewall
 import hids
 import sniffer
@@ -59,6 +60,9 @@ ADMIN_USUARIO = os.environ.get("NIDS_ADMIN_USER")
 ADMIN_PASSWORD = os.environ.get("NIDS_ADMIN_PASSWORD")
 ADMIN_API_KEY = os.environ.get("NIDS_API_KEY")
 
+# Inicialización de la base de datos local SQLite
+db.inicializar_bd()
+
 lock = threading.Lock()
 
 # Estado operativo y métricas en memoria
@@ -76,8 +80,12 @@ origenes = collections.Counter()
 serie_pps = collections.deque([0] * 60, maxlen=60)
 _contador_segundo = 0
 
-# Parámetros editables para el análisis del motor de detección
-configuracion = {
+# Carga inicial de alertas históricas desde la base de datos local
+for _a in reversed(db.consultar_alertas(limite=500)):
+    alertas.appendleft(_a)
+
+# Parámetros editables para el motor de detección persistidos en config.json
+CONFIG_PREDETERMINADA = {
     "ventana_seg": 10,
     "umbral_conexiones": 8,
     "umbral_pps": 300,
@@ -85,6 +93,7 @@ configuracion = {
     "lista_blanca": "192.168.1.1",
     "notificar_severidad_minima": "baja",
 }
+configuracion = db.cargar_configuracion(CONFIG_PREDETERMINADA)
 
 
 def hora():
@@ -164,22 +173,26 @@ def registrar_paquete(p):
 def registrar_alerta(a):
     """
     Registra un evento de seguridad detectado por el motor en la bitácora
-    con su nivel de severidad, método de detección y detalles de origen.
+    con su nivel de severidad, método de detección y detalles de origen,
+    persistiendo la evidencia en la base de datos local SQLite.
     """
+    nueva_alerta = {
+        "fecha": a.get("fecha") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "hora": a.get("hora") or hora(),
+        "tipo": a.get("tipo", "Sin tipo"),
+        "severidad": a.get("severidad", "baja"),
+        "metodo": a.get("metodo", ""),
+        "src": a.get("src", ""),
+        "dst": a.get("dst", ""),
+        "puerto": a.get("puerto", ""),
+        "descripcion": a.get("descripcion", ""),
+        "estado": a.get("estado", "Nueva"),
+    }
+    nuevo_id = db.guardar_alerta(nueva_alerta)
+    nueva_alerta["id"] = nuevo_id
+
     with lock:
-        alertas.appendleft({
-            "id": len(alertas) + 1,
-            "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "hora": hora(),
-            "tipo": a.get("tipo", "Sin tipo"),
-            "severidad": a.get("severidad", "baja"),
-            "metodo": a.get("metodo", ""),
-            "src": a.get("src", ""),
-            "dst": a.get("dst", ""),
-            "puerto": a.get("puerto", ""),
-            "descripcion": a.get("descripcion", ""),
-            "estado": "Nueva",
-        })
+        alertas.appendleft(nueva_alerta)
 
 
 def _reloj():
@@ -201,6 +214,10 @@ threading.Thread(target=_reloj, daemon=True).start()
 capturador = sniffer.CapturadorRed(registrar_paquete, registrar_alerta, lambda: configuracion)
 al_conectar = capturador.iniciar
 al_desconectar = capturador.detener
+
+# Hilo de supervisión proactiva en equipo (HIDS)
+monitor_hids = hids.MonitorProactivoHIDS(registrar_alerta, intervalo_segundos=4.0)
+monitor_hids.start()
 
 
 # Rutas de autenticación y sesión
@@ -257,6 +274,12 @@ def api_hids_puertos():
     junto con el proceso y la ruta del ejecutable correspondiente.
     """
     return jsonify(hids.escanear_puertos_locales())
+
+
+@app.route("/api/hids/telemetria")
+def api_hids_telemetria():
+    """Consulta métricas de rendimiento y telemetría de hardware del host."""
+    return jsonify(hids.obtener_telemetria_sistema())
 
 
 @app.route("/api/interfaces")
@@ -338,39 +361,68 @@ def api_estado():
 @app.route("/api/bitacora")
 def api_bitacora():
     """
-    Filtra y retorna los registros de alertas almacenados de acuerdo con
-    el nivel de severidad y el texto de búsqueda suministrados.
+    Filtra y retorna los registros de alertas almacenados en la base de datos
+    de acuerdo con el nivel de severidad, método y texto de búsqueda suministrados.
     """
-    sev = request.args.get("severidad", "")
-    q = request.args.get("q", "").lower()
-    with lock:
-        filas = [a for a in alertas
-                 if (not sev or a["severidad"] == sev)
-                 and (not q or q in f'{a["tipo"]} {a["src"]} {a["dst"]} {a["descripcion"]}'.lower())]
+    sev = request.args.get("severidad", "").strip() or None
+    metodo = request.args.get("metodo", "").strip() or None
+    q = request.args.get("q", "").strip() or None
+    filas = db.consultar_alertas(limite=1000, severidad=sev, texto=q, metodo=metodo)
     return jsonify(filas)
+
+
+@app.route("/api/alertas/limpiar", methods=["POST"])
+def api_alertas_limpiar():
+    """Limpia la lista activa de alertas en memoria."""
+    with lock:
+        alertas.clear()
+    return jsonify(ok=True, mensaje="Alertas activas despejadas en pantalla.")
+
+
+@app.route("/api/alertas/marcar_todas", methods=["POST"])
+def api_alertas_marcar_todas():
+    """Marca todas las alertas pendientes como revisadas en base de datos y memoria."""
+    total = db.marcar_todas_alertas_revisadas()
+    with lock:
+        for a in alertas:
+            a["estado"] = "Revisada"
+    return jsonify(ok=True, total=total, mensaje=f"Se marcaron {total} alertas como revisadas.")
+
+
+@app.route("/api/bitacora/limpiar", methods=["POST"])
+@requiere_autenticacion
+def api_bitacora_limpiar():
+    """Elimina de forma permanente todo el historial de alertas en base de datos y memoria."""
+    db.limpiar_todas_alertas()
+    with lock:
+        alertas.clear()
+    return jsonify(ok=True, mensaje="Historial de bitácora eliminado correctamente.")
 
 
 @app.route("/api/bitacora/<int:id_alerta>", methods=["POST"])
 @requiere_autenticacion
 def api_marcar(id_alerta):
-    """Actualiza el estado de atención de una alerta dentro de la bitácora."""
+    """Actualiza el estado de atención de una alerta dentro de la bitácora y la base de datos."""
     nuevo = (request.json or {}).get("estado", "Revisada")
+    actualizado = db.actualizar_estado_alerta(id_alerta, nuevo)
     with lock:
         for a in alertas:
             if a["id"] == id_alerta:
                 a["estado"] = nuevo
                 return jsonify(ok=True)
-    return jsonify(ok=False), 404
+    return jsonify(ok=actualizado), (200 if actualizado else 404)
 
 
 @app.route("/api/bitacora.csv")
 def api_csv():
     """
-    Exporta el contenido completo de la bitácora en formato CSV
-    sanitizando cada celda para evitar inyección de fórmulas en hojas de cálculo.
+    Exporta el contenido de la bitácora desde la base de datos en formato CSV
+    con soporte opcional de filtros y sanitizando cada celda para evitar inyección de fórmulas.
     """
-    with lock:
-        filas = list(alertas)
+    sev = request.args.get("severidad", "").strip() or None
+    metodo = request.args.get("metodo", "").strip() or None
+    q = request.args.get("q", "").strip() or None
+    filas = db.consultar_alertas(limite=50000, severidad=sev, texto=q, metodo=metodo)
     buf = io.StringIO()
     campos = ["id", "fecha", "tipo", "severidad", "metodo", "src", "dst", "puerto", "descripcion", "estado"]
     w = csv.DictWriter(buf, fieldnames=campos, extrasaction="ignore")
@@ -469,6 +521,7 @@ def api_config():
         if errores:
             return jsonify(ok=False, mensaje="; ".join(errores)), 400
 
+        db.guardar_configuracion(configuracion)
         return jsonify(ok=True, config=configuracion)
 
     return jsonify(configuracion)
@@ -560,8 +613,43 @@ def api_firewall_reglas():
 
 @app.route("/api/firewall/auditoria")
 def api_firewall_auditoria():
-    """Retorna el historial completo de auditoría de bloqueos y retiros del firewall."""
-    return jsonify(firewall.obtener_auditoria())
+    """Retorna el historial completo de auditoría de bloqueos y retiros con soporte para filtros."""
+    accion = request.args.get("accion", "").strip() or None
+    estado_regla = request.args.get("estado", "").strip() or None
+    q = request.args.get("q", "").strip() or None
+    return jsonify(firewall.obtener_auditoria(accion=accion, estado=estado_regla, texto=q))
+
+
+@app.route("/api/firewall/auditoria/limpiar", methods=["POST"])
+@requiere_autenticacion
+def api_firewall_auditoria_limpiar():
+    """Elimina de forma permanente todo el historial de auditoría de mitigación."""
+    db.limpiar_toda_auditoria()
+    return jsonify(ok=True, mensaje="Historial de auditoría de firewall eliminado correctamente.")
+
+
+@app.route("/api/firewall/auditoria.csv")
+def api_firewall_auditoria_csv():
+    """
+    Exporta el historial de auditoría de mitigación en formato CSV
+    con soporte opcional para filtros y sanitizando cada celda para prevenir inyección de fórmulas.
+    """
+    accion = request.args.get("accion", "").strip() or None
+    estado_regla = request.args.get("estado", "").strip() or None
+    q = request.args.get("q", "").strip() or None
+    registros = db.consultar_auditoria(limite=50000, accion=accion, estado=estado_regla, texto=q)
+    buf = io.StringIO()
+    campos = [
+        "id", "tipo", "objetivo", "accion", "solicitado_por",
+        "ip_origen", "fecha_aplicacion", "fecha_retiro", "retirado_por", "estado", "detalle"
+    ]
+    w = csv.DictWriter(buf, fieldnames=campos, extrasaction="ignore")
+    w.writeheader()
+    for reg in registros:
+        w.writerow({k: sanitizar_campo_csv(reg.get(k, "")) for k in campos})
+    nombre = f"auditoria_firewall_{datetime.now():%Y%m%d_%H%M}.csv"
+    return Response("\ufeff" + buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={nombre}"})
 
 
 @app.route("/api/simular_ataque", methods=["POST"])

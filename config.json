@@ -1,0 +1,8 @@
+{
+  "ventana_seg": 10,
+  "umbral_conexiones": 8,
+  "umbral_pps": 350,
+  "enfriamiento_seg": 20,
+  "lista_blanca": "192.168.1.1, 10.0.0.1",
+  "notificar_severidad_minima": "baja"
+}

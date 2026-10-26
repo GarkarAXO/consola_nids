@@ -1,14 +1,18 @@
 """
-Módulo de inspección de host (HIDS) - Análisis de puertos locales y procesos
+Módulo de inspección de host (HIDS) - Análisis de puertos locales, procesos y telemetría
 Autor:
 
-Este módulo inspecciona los puertos de red que se encuentran abiertos y en escucha
-en la máquina local. Identifica qué aplicación o proceso del sistema operativo
-abrió cada puerto, obtiene la ruta completa del archivo ejecutable en el disco y
-clasifica el puerto según los rangos establecidos por la IANA.
+Este módulo inspecciona los puertos de red en escucha en la máquina local, identifica
+el proceso responsable junto con la ruta de su ejecutable en disco, y provee un hilo
+de supervisión proactiva para alertar de inmediato cuando se abre un puerto sensible
+o se detecta un consumo anómalo de recursos en el equipo.
 """
 
 import socket
+import threading
+import time
+from datetime import datetime
+
 import psutil
 
 # Clasificación del rango de un puerto según los estándares de la IANA
@@ -68,7 +72,6 @@ def escanear_puertos_locales():
         return [{"error": f"No se pudieron consultar las conexiones: {e}"}]
 
     for conn in conexiones:
-        # Se examinan sockets en escucha (TCP LISTEN) o sockets UDP enlazados
         es_listen_tcp = conn.status == psutil.CONN_LISTEN
         es_udp = conn.type == socket.SOCK_DGRAM
 
@@ -121,26 +124,134 @@ def escanear_puertos_locales():
             "sensible": puerto in (21, 23, 445, 3389, 4444),
         })
 
-    # Ordenar por número de puerto para facilitar la lectura
     resultados.sort(key=lambda x: x["puerto"])
     return resultados
 
 
-def imprimir_resumen_terminal():
-    """Muestra en la consola de comandos la lista de puertos detectados en el host."""
-    puertos = escanear_puertos_locales()
-    print(f"Total de puertos locales en escucha detectados: {len(puertos)}\n")
-    print(f"{'PROTO':<6} {'PUERTO':<7} {'RANGO':<25} {'PROCESO':<22} {'RUTA DEL EJECUTABLE'}")
-    print("-" * 105)
-    for p in puertos:
-        if "error" in p:
-            print(p["error"])
-            continue
-        ruta_corta = p['ruta_ejecutable']
-        if len(ruta_corta) > 42:
-            ruta_corta = "..." + ruta_corta[-39:]
-        print(f"{p['protocolo']:<6} {p['puerto']:<7} {p['rango']:<25} {p['proceso']:<22} {ruta_corta}")
+def obtener_telemetria_sistema():
+    """
+    Recopila métricas operativas de rendimiento del host local (CPU, Memoria RAM,
+    espacio en disco y procesos principales con mayor consumo).
+    """
+    try:
+        cpu_total = psutil.cpu_percent(interval=None)
+        memoria = psutil.virtual_memory()
+        disco = psutil.disk_usage("C:\\" if psutil.WINDOWS else "/")
+
+        top_procesos = []
+        for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent"]):
+            try:
+                top_procesos.append({
+                    "pid": p.info["pid"],
+                    "nombre": p.info["name"] or "Desconocido",
+                    "cpu": round(p.info["cpu_percent"] or 0.0, 1),
+                    "memoria": round(p.info["memory_percent"] or 0.0, 1),
+                })
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        top_procesos.sort(key=lambda x: (x["cpu"], x["memoria"]), reverse=True)
+
+        return {
+            "ok": True,
+            "cpu_porcentaje": cpu_total,
+            "cpu_nucleos": psutil.cpu_count(logical=True),
+            "memoria_porcentaje": memoria.percent,
+            "memoria_usada_mb": round(memoria.used / (1024 * 1024), 1),
+            "memoria_total_mb": round(memoria.total / (1024 * 1024), 1),
+            "disco_porcentaje": disco.percent,
+            "disco_libre_gb": round(disco.free / (1024 * 1024 * 1024), 1),
+            "procesos_totales": len(top_procesos),
+            "top_procesos": top_procesos[:5],
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
-if __name__ == "__main__":
-    imprimir_resumen_terminal()
+class MonitorProactivoHIDS(threading.Thread):
+    """
+    Hilo de supervisión continua del host que detecta la apertura de nuevos sockets
+    locales y emite alertas automáticas ante puertos sensibles o sospechosos.
+    """
+
+    def __init__(self, callback_alerta, intervalo_segundos=4.0):
+        super().__init__(daemon=True)
+        self.callback_alerta = callback_alerta
+        self.intervalo = intervalo_segundos
+        self.activo = False
+        self.puertos_registrados = set()
+        self.primer_escaneo = True
+        self.ultimo_aviso_cpu = 0
+
+    def run(self):
+        """Bucle continuo de verificación de sockets locales y telemetría."""
+        self.activo = True
+        while self.activo:
+            try:
+                self._verificar_sockets()
+                self._verificar_telemetria()
+            except Exception:
+                pass
+            time.sleep(self.intervalo)
+
+    def _verificar_sockets(self):
+        """Compara los sockets actuales contra el catálogo de sockets conocidos."""
+        lista_actual = escanear_puertos_locales()
+        puertos_actuales = set()
+
+        for item in lista_actual:
+            if "error" in item:
+                continue
+
+            clave = (item["protocolo"], item["puerto"])
+            puertos_actuales.add(clave)
+
+            # Si es el primer escaneo al arrancar, se crea la línea base inicial
+            if self.primer_escaneo:
+                continue
+
+            # Si se detecta un puerto nuevo que no estaba en la línea base
+            if clave not in self.puertos_registrados:
+                es_critico = item.get("sensible", False)
+                tipo_alerta = "Puerto Crítico Abierto en Host" if es_critico else "Nuevo Puerto en Escucha en Host"
+                severidad = "alta" if es_critico else "media"
+
+                self.callback_alerta({
+                    "tipo": tipo_alerta,
+                    "severidad": severidad,
+                    "metodo": "Host IDS (HIDS)",
+                    "src": "127.0.0.1",
+                    "dst": item["ip"] or "0.0.0.0",
+                    "puerto": item["puerto"],
+                    "descripcion": (
+                        f"El proceso '{item['proceso']}' (PID: {item['pid']}) abrió el puerto "
+                        f"{item['puerto']}/{item['protocolo']} ({item['servicio']}). "
+                        f"Ruta: {item['ruta_ejecutable']}"
+                    ),
+                })
+
+        self.puertos_registrados = puertos_actuales
+        self.primer_escaneo = False
+
+    def _verificar_telemetria(self):
+        """Inspecciona si el host experimenta una sobrecarga anómala de procesamiento."""
+        ahora = time.time()
+        if ahora - self.ultimo_aviso_cpu < 60.0:
+            return
+
+        uso_cpu = psutil.cpu_percent(interval=None)
+        if uso_cpu >= 95.0:
+            self.ultimo_aviso_cpu = ahora
+            self.callback_alerta({
+                "tipo": "Consumo Anómalo de CPU en Host",
+                "severidad": "media",
+                "metodo": "Host IDS (HIDS)",
+                "src": "127.0.0.1",
+                "dst": "Localhost",
+                "puerto": 0,
+                "descripcion": f"Carga de procesamiento global elevada al {uso_cpu}% en el equipo local.",
+            })
+
+    def detener(self):
+        """Detiene el hilo de supervisión del host."""
+        self.activo = False

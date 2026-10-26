@@ -375,9 +375,20 @@ async function actualizar() {
       ).join("")
     : `<tr><td colspan="7" class="vacio">${conectado ? "Esperando paquetes del motor…" : "Conecta una interfaz para ver el tráfico"}</td></tr>`;
 
-  $("#listaAlertas").innerHTML = (e.alertas_recientes && e.alertas_recientes.length)
-    ? e.alertas_recientes.map(tarjetaAlerta).join("")
-    : '<div class="vacio">No hay alertas. Cuando el motor detecte algo aparecerá aquí.</div>';
+  // Filtrado reactivo en la lista visual de alertas activas
+  const fSevAlertas = $("#fSevAlertas") ? $("#fSevAlertas").value : "";
+  const fTextoAlertas = $("#fTextoAlertas") ? $("#fTextoAlertas").value.toLowerCase().trim() : "";
+
+  const alertasFiltradas = (e.alertas_recientes || []).filter(a => {
+    const coincideSev = !fSevAlertas || a.severidad === fSevAlertas;
+    const textoComp = `${a.tipo} ${a.src} ${a.dst} ${a.descripcion} ${a.metodo} ${a.puerto}`.toLowerCase();
+    const coincideTexto = !fTextoAlertas || textoComp.includes(fTextoAlertas);
+    return coincideSev && coincideTexto;
+  });
+
+  $("#listaAlertas").innerHTML = alertasFiltradas.length
+    ? alertasFiltradas.map(tarjetaAlerta).join("")
+    : '<div class="vacio">No hay alertas con los criterios seleccionados.</div>';
 
   if (ultimoTotalAlertas === -1) ultimoTotalAlertas = e.total_alertas;
   const nuevas = (e.total_alertas || 0) - ultimoTotalAlertas;
@@ -390,9 +401,35 @@ async function actualizar() {
   }
 }
 
-// Consulta de bitácora con filtros por severidad o término de búsqueda
+// Escuchas para filtrado y limpieza de alertas activas
+if ($("#fSevAlertas")) $("#fSevAlertas").onchange = actualizar;
+if ($("#fTextoAlertas")) $("#fTextoAlertas").oninput = actualizar;
+
+if ($("#btnLimpiarAlertas")) {
+  $("#btnLimpiarAlertas").onclick = async () => {
+    const r = await api("/api/alertas/limpiar", {});
+    aviso(r.mensaje || "Alertas activas despejadas.");
+    actualizar();
+  };
+}
+
+if ($("#btnMarcarTodasAlertas")) {
+  $("#btnMarcarTodasAlertas").onclick = async () => {
+    const r = await api("/api/alertas/marcar_todas", {});
+    aviso(r.mensaje);
+    actualizar();
+    if ($("#bitacora").classList.contains("activa")) cargarBitacora();
+  };
+}
+
+// Consulta de bitácora con filtros por severidad, método y término de búsqueda
 async function cargarBitacora() {
-  const q = new URLSearchParams({ severidad: $("#fSev").value, q: $("#fTexto").value });
+  const fMetodo = $("#fMetodo") ? $("#fMetodo").value : "";
+  const q = new URLSearchParams({
+    severidad: $("#fSev").value,
+    metodo: fMetodo,
+    q: $("#fTexto").value
+  });
   const filas = await api("/api/bitacora?" + q);
   if (!Array.isArray(filas)) return;
   $("#tbBitacora").innerHTML = filas.length
@@ -422,16 +459,55 @@ async function marcar(id) {
 }
 
 if ($("#btnBuscar")) $("#btnBuscar").onclick = cargarBitacora;
+if ($("#fSev")) $("#fSev").onchange = cargarBitacora;
+if ($("#fMetodo")) $("#fMetodo").onchange = cargarBitacora;
 if ($("#fTexto")) {
   $("#fTexto").onkeydown = e => {
     if (e.key === "Enter") cargarBitacora();
   };
 }
 
+if ($("#btnExportarBitacora")) {
+  $("#btnExportarBitacora").onclick = () => {
+    const fMetodo = $("#fMetodo") ? $("#fMetodo").value : "";
+    const q = new URLSearchParams({
+      severidad: $("#fSev") ? $("#fSev").value : "",
+      metodo: fMetodo,
+      q: $("#fTexto") ? $("#fTexto").value : ""
+    });
+    window.location.href = "/api/bitacora.csv?" + q.toString();
+  };
+}
+
+if ($("#btnLimpiarBitacora")) {
+  $("#btnLimpiarBitacora").onclick = async () => {
+    if (!confirm("¿Deseas vaciar permanentemente todo el historial de la bitácora en la base de datos?")) return;
+    const r = await api("/api/bitacora/limpiar", {});
+    aviso(r.mensaje || "Bitácora vaciada.");
+    cargarBitacora();
+    actualizar();
+  };
+}
+
+// Consulta periódica de telemetría y salud del host (CPU, RAM, Disco)
+async function cargarTelemetriaHost() {
+  const t = await api("/api/hids/telemetria");
+  if (!t || !t.ok) return;
+
+  if ($("#kHostCpu")) $("#kHostCpu").textContent = `${t.cpu_porcentaje} %`;
+  if ($("#kHostNucleos")) $("#kHostNucleos").textContent = `${t.cpu_nucleos} núcleos lógicos`;
+  if ($("#kHostRam")) $("#kHostRam").textContent = `${t.memoria_porcentaje} %`;
+  if ($("#kHostRamMb")) $("#kHostRamMb").textContent = `${t.memoria_usada_mb} / ${t.memoria_total_mb} MB`;
+  if ($("#kHostDisco")) $("#kHostDisco").textContent = `${t.disco_porcentaje} %`;
+  if ($("#kHostDiscoGb")) $("#kHostDiscoGb").textContent = `${t.disco_libre_gb} GB libres`;
+  if ($("#kHostProcesos")) $("#kHostProcesos").textContent = t.procesos_totales;
+}
+
 // Consulta de puertos locales y procesos asociados (Host IDS)
 let cachePuertosLocales = [];
 
 async function cargarPuertosLocales() {
+  cargarTelemetriaHost();
   $("#tbPuertos").innerHTML = '<tr><td colspan="8" class="vacio">Consultando puertos en el equipo...</td></tr>';
   try {
     cachePuertosLocales = await api("/api/hids/puertos");
@@ -564,7 +640,16 @@ async function cargarAuditoriaFirewall() {
   const tb = $("#tbAuditoria");
   if (!tb) return;
   try {
-    cacheAuditoria = await api("/api/firewall/auditoria");
+    const params = new URLSearchParams();
+    const fAccion = $("#fAccionAuditoria") ? $("#fAccionAuditoria").value : "";
+    const fEstado = $("#fEstadoAuditoria") ? $("#fEstadoAuditoria").value : "";
+    const fTexto = $("#fTextoAuditoria") ? $("#fTextoAuditoria").value.trim() : "";
+    if (fAccion) params.set("accion", fAccion);
+    if (fEstado) params.set("estado", fEstado);
+    if (fTexto) params.set("q", fTexto);
+
+    const queryStr = params.toString() ? "?" + params.toString() : "";
+    cacheAuditoria = await api("/api/firewall/auditoria" + queryStr);
     renderizarTablaAuditoria();
   } catch {
     tb.innerHTML = '<tr><td colspan="11" class="vacio">Error al obtener registros de auditoría.</td></tr>';
@@ -575,13 +660,15 @@ function renderizarTablaAuditoria() {
   const tb = $("#tbAuditoria");
   if (!tb) return;
   const fAccion = $("#fAccionAuditoria") ? $("#fAccionAuditoria").value : "";
+  const fEstado = $("#fEstadoAuditoria") ? $("#fEstadoAuditoria").value : "";
   const fTexto = $("#fTextoAuditoria") ? $("#fTextoAuditoria").value.toLowerCase().trim() : "";
 
   const filtrados = (cacheAuditoria || []).filter(item => {
     const coincideAccion = !fAccion || item.accion === fAccion;
+    const coincideEstado = !fEstado || item.estado === fEstado;
     const cadena = `${item.objetivo} ${item.solicitado_por} ${item.retirado_por || ""} ${item.detalle} ${item.estado}`.toLowerCase();
     const coincideTexto = !fTexto || cadena.includes(fTexto);
-    return coincideAccion && coincideTexto;
+    return coincideAccion && coincideEstado && coincideTexto;
   });
 
   if (!filtrados.length) {
@@ -613,8 +700,37 @@ function renderizarTablaAuditoria() {
 
 if ($("#btnRefrescarReglas")) $("#btnRefrescarReglas").onclick = cargarReglasFirewall;
 if ($("#btnRefrescarAuditoria")) $("#btnRefrescarAuditoria").onclick = cargarAuditoriaFirewall;
-if ($("#fAccionAuditoria")) $("#fAccionAuditoria").onchange = renderizarTablaAuditoria;
-if ($("#fTextoAuditoria")) $("#fTextoAuditoria").oninput = renderizarTablaAuditoria;
+if ($("#fAccionAuditoria")) $("#fAccionAuditoria").onchange = cargarAuditoriaFirewall;
+if ($("#fEstadoAuditoria")) $("#fEstadoAuditoria").onchange = cargarAuditoriaFirewall;
+if ($("#fTextoAuditoria")) {
+  $("#fTextoAuditoria").oninput = renderizarTablaAuditoria;
+  $("#fTextoAuditoria").onkeydown = e => {
+    if (e.key === "Enter") cargarAuditoriaFirewall();
+  };
+}
+
+if ($("#btnExportarAuditoria")) {
+  $("#btnExportarAuditoria").onclick = () => {
+    const params = new URLSearchParams();
+    const fAccion = $("#fAccionAuditoria") ? $("#fAccionAuditoria").value : "";
+    const fEstado = $("#fEstadoAuditoria") ? $("#fEstadoAuditoria").value : "";
+    const fTexto = $("#fTextoAuditoria") ? $("#fTextoAuditoria").value.trim() : "";
+    if (fAccion) params.set("accion", fAccion);
+    if (fEstado) params.set("estado", fEstado);
+    if (fTexto) params.set("q", fTexto);
+    const qs = params.toString() ? "?" + params.toString() : "";
+    window.location.href = "/api/firewall/auditoria.csv" + qs;
+  };
+}
+
+if ($("#btnLimpiarAuditoria")) {
+  $("#btnLimpiarAuditoria").onclick = async () => {
+    if (!confirm("¿Deseas vaciar permanentemente todo el historial de auditoría del Firewall en la base de datos?")) return;
+    const r = await api("/api/firewall/auditoria/limpiar", {});
+    aviso(r.mensaje || "Historial de auditoría vaciado.");
+    cargarAuditoriaFirewall();
+  };
+}
 
 // Generación dinámica del formulario de parámetros
 async function cargarConfig() {

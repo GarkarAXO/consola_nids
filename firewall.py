@@ -14,13 +14,10 @@ import subprocess
 import threading
 from datetime import datetime
 
+import db
+
 # Prefijo distintivo para identificar reglas generadas por el sistema NIDS
 PREFIJO_REGLA = "NIDS_RULE_"
-
-# Registro de auditoría en memoria y cerrojo de sincronización
-_lock_auditoria = threading.Lock()
-_registro_auditoria = []
-_contador_auditoria = 0
 
 
 def validar_ip(ip):
@@ -106,48 +103,24 @@ def ejecutar_comando_firewall(argumentos):
 
 def registrar_auditoria(tipo, objetivo, accion, solicitado_por, ip_origen, resultado, detalle):
     """
-    Inserta un nuevo evento en la bitácora de auditoría de mitigación.
+    Inserta un nuevo evento en la bitácora de auditoría persistente de mitigación.
     """
-    global _contador_auditoria
-    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with _lock_auditoria:
-        _contador_auditoria += 1
-        registro = {
-            "id": _contador_auditoria,
-            "tipo": tipo,
-            "objetivo": objetivo,
-            "accion": accion,
-            "solicitado_por": solicitado_por or "admin",
-            "ip_origen": ip_origen or "127.0.0.1",
-            "fecha_aplicacion": ahora_str if resultado else None,
-            "fecha_retiro": None,
-            "retirado_por": None,
-            "estado": "ACTIVO" if (resultado and accion == "BLOQUEO") else ("RETIRADO" if accion == "DESBLOQUEO" else "FALLIDO"),
-            "detalle": detalle,
-        }
-        _registro_auditoria.append(registro)
-        return registro
+    return db.guardar_auditoria(tipo, objetivo, accion, solicitado_por, ip_origen, resultado, detalle)
 
 
 def marcar_retiro_auditoria(objetivo, retirado_por):
     """
     Actualiza la fecha de retiro en registros de bloqueo previos activos para el mismo objetivo.
     """
-    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with _lock_auditoria:
-        for reg in reversed(_registro_auditoria):
-            if reg["objetivo"] == objetivo and reg["accion"] == "BLOQUEO" and reg["estado"] == "ACTIVO":
-                reg["fecha_retiro"] = ahora_str
-                reg["retirado_por"] = retirado_por or "admin"
-                reg["estado"] = "RETIRADO"
+    db.marcar_retiro_auditoria(objetivo, retirado_por)
 
 
-def obtener_auditoria():
+def obtener_auditoria(accion=None, estado=None, texto=None):
     """
-    Retorna la lista completa de eventos de auditoría ordenada desde el más reciente.
+    Retorna la lista completa de eventos de auditoría ordenada desde el más reciente
+    con soporte para filtrado por acción, estado de regla y búsqueda textual.
     """
-    with _lock_auditoria:
-        return list(reversed(_registro_auditoria))
+    return db.consultar_auditoria(limite=500, accion=accion, estado=estado, texto=texto)
 
 
 def bloquear_puerto(puerto, protocolo="TCP", usuario="admin", ip_origen="127.0.0.1"):

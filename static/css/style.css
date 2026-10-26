@@ -494,6 +494,11 @@ td.mono, .mono {
   margin-bottom: 14px;
 }
 
+.filtros input {
+  flex: 1;
+  min-width: 180px;
+}
+
 .form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

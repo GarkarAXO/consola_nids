@@ -34,10 +34,10 @@ Sistema híbrido de detección de intrusos en red y equipo desarrollado para la 
 | Pestaña | Funcionalidad |
 | :--- | :--- |
 | **Monitor** | Métricas en tiempo real (paquetes totales, bytes, duración), gráfica temporal de paquetes/segundo (PPS), barras de protocolos e IPs más activas, y tabla de inspección de tráfico en vivo. |
-| **Alertas** | Tarjetas clasificadas por nivel de severidad (alta, media, baja) con botón directo para bloquear la IP atacante en el Firewall. |
-| **Bitácora** | Historial filtrable por severidad y búsqueda textual, opción para marcar alertas como revisadas y exportación de evidencias a formato CSV protegido contra inyección de fórmulas. |
+| **Alertas** | Tarjetas clasificadas por nivel de severidad (alta, media, baja) con filtrado instantáneo por severidad y texto, botón directo para bloquear la IP atacante en el Firewall, botón de marcación masiva a "Revisada" y opción para despejar alertas activas en pantalla. |
+| **Bitácora** | Historial filtrable por severidad, método de detección y búsqueda textual, opción para marcar alertas individuales como revisadas, botón para vaciar la bitácora permanentemente y exportación de evidencias a formato CSV respetando los filtros activos. |
 | **Puertos Locales** | Módulo Host IDS (HIDS) que lista todos los puertos en escucha en el equipo, clasifica su rango IANA, identifica el proceso y muestra la ruta exacta del ejecutable en disco, con opción de bloqueo directo. |
-| **Firewall y Auditoría** | Inspección y revocación directa de reglas activas en Windows Firewall, junto con la bitácora de auditoría (IPS Audit Trail) que documenta quién solicitó cada bloqueo, cuándo se aplicó y cuándo se retiró. |
+| **Firewall y Auditoría** | Inspección y revocación directa de reglas activas en Windows Firewall, junto con la bitácora de auditoría (IPS Audit Trail) filtrable por acción, estado de regla y búsqueda textual, botón de vaciado de auditoría y exportación a CSV. |
 | **Configuración** | Ajuste dinámico de parámetros de detección (ventana de análisis en segundos, umbrales de conexiones por host, límite de paquetes/s, tiempo de enfriamiento y lista blanca de IPs) con validación estricta de rangos. |
 
 ---
@@ -53,17 +53,18 @@ Dado que el proceso requiere ejecutarse con privilegios elevados de Administrado
 
 ---
 
-## 3. Módulos del Sistema
+## 4. Módulos del Sistema
 
-- **`app.py`:** Servidor web Flask y API REST desacoplada que comunica la interfaz con los motores de seguridad.
-- **`sniffer.py`:** Motor NIDS de captura y decodificación de protocolos IPv4, TCP (banderas SYN/ACK/FIN/RST), UDP, ICMP y DNS, con reglas de detección de escaneos de puertos y ráfagas.
-- **`hids.py`:** Módulo HIDS que inspecciona las tablas de sockets locales, resuelve el PID y extrae la ruta completa de los archivos ejecutables en disco con `psutil`.
-- **`firewall.py`:** Módulo IPS que gestiona reglas de entrada en el Firewall de Windows mediante `netsh advfirewall` para bloquear puertos o direcciones IP hostiles.
+- **`app.py`:** Servidor web Flask y API REST desacoplada que coordina la interfaz con los motores de seguridad, gestiona la autenticación administrativa y sirve la telemetría en vivo.
+- **`db.py`:** Motor de persistencia local en SQLite (`nids.db`) y configuración en JSON (`config.json`), asegurando la supervivencia de alertas, auditorías y umbrales ante reinicios.
+- **`sniffer.py`:** Motor NIDS de captura y decodificación de protocolos IPv4, TCP (banderas SYN/ACK/FIN/RST), UDP, ICMP, DNS y mDNS, con reglas de detección de escaneos y ráfagas DoS.
+- **`hids.py`:** Módulo HIDS que inspecciona las tablas de sockets locales, resuelve procesos, vigila proactivamente la apertura de puertos sensibles y mide la telemetría de recursos (CPU, RAM, disco).
+- **`firewall.py`:** Módulo IPS que gestiona reglas de entrada en el Firewall de Windows mediante `netsh advfirewall` (con `shell=False`) e interactúa con el registro de auditoría.
 - **`GUIA_PUERTOS_Y_DETECCION.md`:** Documento técnico detallado que explica la teoría de rangos IANA, protocolos y la justificación de privilegios para la defensa ante el asesor.
 
 ---
 
-## 4. Procedimiento de Demostración en Vivo
+## 5. Procedimiento de Demostración en Vivo
 
 1. **Monitoreo en Vivo:**  
    Iniciar la consola como Administrador, seleccionar la interfaz de red activa (Wi-Fi o Ethernet) y pulsar **"Conectar"**. El tráfico de navegación y consultas DNS comenzará a registrarse inmediatamente.

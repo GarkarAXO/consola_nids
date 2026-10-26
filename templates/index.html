@@ -103,6 +103,17 @@
 
     <!-- Lista de alertas detectadas -->
     <section class="vista" id="alertas">
+      <div class="filtros">
+        <select id="fSevAlertas">
+          <option value="">Todas las severidades</option>
+          <option value="alta">Alta</option>
+          <option value="media">Media</option>
+          <option value="baja">Baja</option>
+        </select>
+        <input id="fTextoAlertas" placeholder="Filtrar alertas activas por IP, tipo o descripción...">
+        <button id="btnMarcarTodasAlertas" class="secundario">Marcar todas como revisadas</button>
+        <button id="btnLimpiarAlertas" class="peligro">Limpiar Alertas</button>
+      </div>
       <div id="listaAlertas">
         <div class="vacio">No hay alertas. Cuando el motor detecte algo aparecerá aquí.</div>
       </div>
@@ -117,9 +128,16 @@
           <option value="media">Media</option>
           <option value="baja">Baja</option>
         </select>
+        <select id="fMetodo">
+          <option value="">Todos los métodos</option>
+          <option value="Anomalía">Anomalía</option>
+          <option value="Firma">Firma</option>
+          <option value="Host IDS">Host IDS (HIDS)</option>
+        </select>
         <input id="fTexto" placeholder="Buscar IP, tipo o descripción">
         <button id="btnBuscar">Buscar</button>
-        <button onclick="location.href='/api/bitacora.csv'">Exportar CSV</button>
+        <button id="btnExportarBitacora" class="secundario">Exportar CSV</button>
+        <button id="btnLimpiarBitacora" class="peligro">Limpiar Bitácora</button>
       </div>
       <div class="panel">
         <div class="tabla" style="max-height:600px">
@@ -148,6 +166,14 @@
 
     <!-- VISTA: PUERTOS LOCALES (HOST IDS) -->
     <section class="vista" id="puertos">
+      <!-- Telemetría operativa del equipo local -->
+      <div class="kpis" style="margin-bottom:14px">
+        <div class="kpi"><span>CPU Host</span><b id="kHostCpu">0 %</b><small id="kHostNucleos" style="color:var(--tenue)">- núcleos</small></div>
+        <div class="kpi"><span>Memoria RAM</span><b id="kHostRam">0 %</b><small id="kHostRamMb" style="color:var(--tenue)">0 / 0 MB</small></div>
+        <div class="kpi"><span>Disco Local</span><b id="kHostDisco">0 %</b><small id="kHostDiscoGb" style="color:var(--tenue)">0 GB libres</small></div>
+        <div class="kpi"><span>Procesos Activos</span><b id="kHostProcesos">0</b><small style="color:var(--tenue)">Supervisados</small></div>
+      </div>
+
       <div class="filtros">
         <select id="fProtoPuerto">
           <option value="">Todos los protocolos</option>
@@ -219,7 +245,15 @@
             <option value="BLOQUEO">Bloqueos</option>
             <option value="DESBLOQUEO">Desbloqueos</option>
           </select>
+          <select id="fEstadoAuditoria">
+            <option value="">Todos los estados</option>
+            <option value="ACTIVO">Activos</option>
+            <option value="RETIRADO">Retirados</option>
+            <option value="FALLIDO">Fallidos</option>
+          </select>
           <input id="fTextoAuditoria" placeholder="Buscar por objetivo, solicitante o detalle...">
+          <button id="btnExportarAuditoria" class="secundario">Exportar CSV</button>
+          <button id="btnLimpiarAuditoria" class="peligro">Limpiar Auditoría</button>
         </div>
         <div class="tabla" style="max-height:450px">
           <table>

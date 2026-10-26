@@ -18,9 +18,9 @@ Este documento centraliza el estado actual del proyecto, los componentes impleme
 - [x] Gráfica temporal en Canvas nativo de paquetes por segundo (últimos 60 segundos), libre de dependencias CDN externas.
 - [x] Visualización de distribución de protocolos y principales direcciones IP de origen mediante barras porcentuales dinámicas.
 - [x] Tabla de inspección de tráfico en vivo con desplazamiento y actualización continua.
-- [x] Vista de alertas con clasificación visual por nivel de severidad (alta, media, baja) y método de detección.
-- [x] Vista de bitácora con filtros por severidad, búsqueda textual por IP/tipo y función para marcar alertas como revisadas.
-- [x] Exportación de registros de bitácora en formato CSV descargable.
+- [x] Vista de alertas con clasificación visual por nivel de severidad (alta, media, baja), método de detección, filtrado reactivo por texto y severidad, botón para despejar alertas activas y botón de marcación masiva a "Revisada".
+- [x] Vista de bitácora con filtros combinados (severidad, método de detección y búsqueda textual), vaciado permanente administrativo de registros y exportación CSV con filtros activos y protección contra inyección de fórmulas.
+- [x] Pestaña de Auditoría de Firewall (IPS Audit Trail) con filtros por acción (Bloqueo/Desbloqueo), estado de regla (Activo/Retirado/Fallido) y búsqueda textual, botón de vaciado administrativo y exportación de bitácora de auditoría a CSV.
 - [x] Formulario dinámico para consulta y ajuste de parámetros de detección (ventanas de tiempo, umbrales y listas blancas).
 - [x] Logo institucional personalizable directamente desde código (vía CSS o etiqueta HTML).
 - [x] Pestaña interactiva de Puertos Locales (Host IDS) con filtrado por protocolo, búsqueda y botón de bloqueo.
@@ -58,13 +58,14 @@ Este documento centraliza el estado actual del proyecto, los componentes impleme
 
 ### Módulo Núcleo de Equipo (HIDS)
 - [x] Monitorear conexiones y puertos en escucha locales con `psutil`, resolviendo nombre de proceso y ruta de disco (`hids.py`).
-- [ ] Implementar un hilo de telemetría de host para inspeccionar consumo anómalo de recursos en procesos activos.
-- [ ] Detectar anomalías en el consumo de CPU y memoria asociadas a posibles procesos maliciosos.
-- [ ] Generar alertas automáticas de host si se abre un puerto sensible (ej. 23, 4444) e integrarlas en la bitácora.
+- [x] Implementar un hilo de telemetría de host para inspeccionar consumo anómalo de recursos en procesos activos (`hids.py` y endpoint `/api/hids/telemetria`).
+- [x] Detectar anomalías en el consumo de CPU y memoria asociadas a posibles procesos maliciosos.
+- [x] Generar alertas automáticas de host si se abre un puerto sensible (ej. 23, 4444) o un nuevo servicio en escucha e integrarlas en la bitácora.
 
 ### Persistencia y Almacenamiento
-- [ ] Reemplazar las colas volátiles en memoria (`collections.deque`) por una base de datos local embebida (SQLite) para garantizar que las alertas y la bitácora sobrevivan al reinicio del sistema.
-- [ ] Crear un archivo de configuración persistente (`config.json` o tabla en base de datos) para que los umbrales modificados por el usuario no se pierdan al reiniciar la aplicación.
+- [x] Reemplazar las colas volátiles en memoria por una base de datos local embebida (SQLite `nids.db`) en el módulo `db.py` para garantizar que las alertas y la bitácora sobrevivan al reinicio del sistema.
+- [x] Crear un archivo de configuración persistente (`config.json`) para que los umbrales modificados por el usuario no se pierdan al reiniciar la aplicación.
+- [x] Persistencia de la bitácora de auditoría de firewall en SQLite para documentar formalmente cada acción de mitigación.
 
 ### Seguridad y Robustecimiento
 - [x] Mitigar vulnerabilidad de inyección de fórmulas CSV anteponiendo un apóstrofe (`'`) a campos que inicien con `=`, `+`, `-` o `@`.
