@@ -1,29 +1,89 @@
 """
-Módulo de mitigación activa y firewall - Bloqueo y habilitación de puertos e IPs
+Módulo de mitigación activa y firewall - Bloqueo, habilitación y auditoría
 Autor:
 
-Este módulo proporciona funciones para gestionar reglas de bloqueo y apertura
-en el Firewall de Windows mediante la herramienta del sistema netsh. Permite al
-sistema NIDS/HIDS actuar como un sistema de prevención de intrusos (IPS),
-bloqueando puertos vulnerables o direcciones IP identificadas como atacantes.
+Este módulo gestiona las reglas de bloqueo y mitigación en el Firewall de
+Windows mediante llamadas directas y seguras a netsh. Incluye validación
+estricta de direcciones IP, puertos y protocolos, así como un registro de
+auditoría que documenta la identidad del solicitante, la fecha y hora de
+aplicación y el momento de retiro de cada regla.
 """
 
+import ipaddress
 import subprocess
-import re
+import threading
+from datetime import datetime
 
-# Prefijo distintivo para identificar fácilmente las reglas creadas por el NIDS
+# Prefijo distintivo para identificar reglas generadas por el sistema NIDS
 PREFIJO_REGLA = "NIDS_RULE_"
 
+# Registro de auditoría en memoria y cerrojo de sincronización
+_lock_auditoria = threading.Lock()
+_registro_auditoria = []
+_contador_auditoria = 0
 
-def ejecutar_comando_firewall(comando):
+
+def validar_ip(ip):
     """
-    Ejecuta un comando netsh en el sistema y retorna el resultado indicando
-    si se aplicó con éxito o si requiere permisos de Administrador.
+    Valida estrictamente que una dirección corresponda al estándar IPv4
+    y que no pertenezca a rangos reservados o peligrosos para bloqueo.
+    """
+    if not isinstance(ip, str):
+        return False, "La dirección IP debe ser una cadena de texto."
+    ip_limpia = ip.strip()
+    if not ip_limpia:
+        return False, "La dirección IP no puede estar vacía."
+
+    try:
+        direccion = ipaddress.IPv4Address(ip_limpia)
+    except ValueError:
+        return False, f"La dirección '{ip_limpia}' no es una dirección IPv4 válida."
+
+    if direccion.is_loopback:
+        return False, "No se permite bloquear la dirección de bucle local (127.0.0.0/8)."
+    if direccion.is_unspecified:
+        return False, "No se permite bloquear la dirección no especificada (0.0.0.0)."
+    if direccion.is_multicast:
+        return False, "No se permite bloquear direcciones de multidifusión (multicast)."
+
+    return True, str(direccion)
+
+
+def validar_puerto(puerto):
+    """
+    Valida estrictamente que el número de puerto sea un entero
+    dentro del rango estándar IANA (1 a 65535).
+    """
+    try:
+        num = int(puerto)
+        if 1 <= num <= 65535:
+            return True, num
+        return False, f"El puerto {num} está fuera del rango permitido (1 a 65535)."
+    except (ValueError, TypeError):
+        return False, "El puerto debe ser un número entero válido."
+
+
+def validar_protocolo(protocolo):
+    """
+    Valida que el protocolo indicado pertenezca a la lista autorizada (TCP o UDP).
+    """
+    if not isinstance(protocolo, str):
+        return False, "El protocolo debe ser una cadena de texto."
+    proto = protocolo.strip().upper()
+    if proto in ("TCP", "UDP"):
+        return True, proto
+    return False, f"Protocolo no admitido '{proto}'. Se requiere TCP o UDP."
+
+
+def ejecutar_comando_firewall(argumentos):
+    """
+    Ejecuta un comando netsh pasando los argumentos como lista parametrizada
+    sin utilizar shell=True para eliminar riesgos de inyección de comandos.
     """
     try:
         resultado = subprocess.run(
-            comando,
-            shell=True,
+            argumentos,
+            shell=False,
             capture_output=True,
             text=True,
             encoding="cp850",
@@ -44,66 +104,178 @@ def ejecutar_comando_firewall(comando):
         return {"ok": False, "mensaje": f"Error al invocar comando del firewall: {e}"}
 
 
-def bloquear_puerto(puerto, protocolo="TCP"):
+def registrar_auditoria(tipo, objetivo, accion, solicitado_por, ip_origen, resultado, detalle):
+    """
+    Inserta un nuevo evento en la bitácora de auditoría de mitigación.
+    """
+    global _contador_auditoria
+    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _lock_auditoria:
+        _contador_auditoria += 1
+        registro = {
+            "id": _contador_auditoria,
+            "tipo": tipo,
+            "objetivo": objetivo,
+            "accion": accion,
+            "solicitado_por": solicitado_por or "admin",
+            "ip_origen": ip_origen or "127.0.0.1",
+            "fecha_aplicacion": ahora_str if resultado else None,
+            "fecha_retiro": None,
+            "retirado_por": None,
+            "estado": "ACTIVO" if (resultado and accion == "BLOQUEO") else ("RETIRADO" if accion == "DESBLOQUEO" else "FALLIDO"),
+            "detalle": detalle,
+        }
+        _registro_auditoria.append(registro)
+        return registro
+
+
+def marcar_retiro_auditoria(objetivo, retirado_por):
+    """
+    Actualiza la fecha de retiro en registros de bloqueo previos activos para el mismo objetivo.
+    """
+    ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with _lock_auditoria:
+        for reg in reversed(_registro_auditoria):
+            if reg["objetivo"] == objetivo and reg["accion"] == "BLOQUEO" and reg["estado"] == "ACTIVO":
+                reg["fecha_retiro"] = ahora_str
+                reg["retirado_por"] = retirado_por or "admin"
+                reg["estado"] = "RETIRADO"
+
+
+def obtener_auditoria():
+    """
+    Retorna la lista completa de eventos de auditoría ordenada desde el más reciente.
+    """
+    with _lock_auditoria:
+        return list(reversed(_registro_auditoria))
+
+
+def bloquear_puerto(puerto, protocolo="TCP", usuario="admin", ip_origen="127.0.0.1"):
     """
     Crea una regla de entrada en el Firewall de Windows para bloquear el tráfico
-    dirigido a un puerto local específico.
+    hacia un puerto local, registrando la solicitud en la bitácora de auditoría.
     """
-    protocolo = protocolo.upper()
-    if protocolo not in ("TCP", "UDP"):
-        return {"ok": False, "mensaje": "El protocolo debe ser TCP o UDP."}
+    valido_pto, res_pto = validar_puerto(puerto)
+    if not valido_pto:
+        registrar_auditoria("PUERTO", str(puerto), "BLOQUEO", usuario, ip_origen, False, res_pto)
+        return {"ok": False, "mensaje": res_pto}
 
-    nombre_regla = f"{PREFIJO_REGLA}BLOCK_PORT_{puerto}_{protocolo}"
-    comando = (
-        f'netsh advfirewall firewall add rule name="{nombre_regla}" '
-        f'dir=in action=block protocol={protocolo} localport={puerto}'
-    )
-    res = ejecutar_comando_firewall(comando)
+    valido_proto, res_proto = validar_protocolo(protocolo)
+    if not valido_proto:
+        registrar_auditoria("PUERTO", f"{res_pto}/{protocolo}", "BLOQUEO", usuario, ip_origen, False, res_proto)
+        return {"ok": False, "mensaje": res_proto}
+
+    puerto_num = res_pto
+    proto_str = res_proto
+    objetivo = f"{puerto_num}/{proto_str}"
+    nombre_regla = f"{PREFIJO_REGLA}BLOCK_PORT_{puerto_num}_{proto_str}"
+
+    argumentos = [
+        "netsh", "advfirewall", "firewall", "add", "rule",
+        f"name={nombre_regla}",
+        "dir=in",
+        "action=block",
+        f"protocol={proto_str}",
+        f"localport={puerto_num}"
+    ]
+
+    res = ejecutar_comando_firewall(argumentos)
+    registrar_auditoria("PUERTO", objetivo, "BLOQUEO", usuario, ip_origen, res["ok"], res["mensaje"])
+
     if res["ok"]:
         res["nombre_regla"] = nombre_regla
-        res["puerto"] = puerto
-        res["protocolo"] = protocolo
+        res["puerto"] = puerto_num
+        res["protocolo"] = proto_str
     return res
 
 
-def desbloquear_puerto(puerto, protocolo="TCP"):
+def desbloquear_puerto(puerto, protocolo="TCP", usuario="admin", ip_origen="127.0.0.1"):
     """
-    Elimina la regla de bloqueo existente para el puerto y protocolo especificados,
-    restaurando el acceso normal.
+    Elimina la regla de bloqueo existente para un puerto y protocolo,
+    actualizando la bitácora de auditoría con la fecha y responsable del retiro.
     """
-    protocolo = protocolo.upper()
-    nombre_regla = f"{PREFIJO_REGLA}BLOCK_PORT_{puerto}_{protocolo}"
-    comando = f'netsh advfirewall firewall delete rule name="{nombre_regla}"'
-    return ejecutar_comando_firewall(comando)
+    valido_pto, res_pto = validar_puerto(puerto)
+    if not valido_pto:
+        registrar_auditoria("PUERTO", str(puerto), "DESBLOQUEO", usuario, ip_origen, False, res_pto)
+        return {"ok": False, "mensaje": res_pto}
 
+    valido_proto, res_proto = validar_protocolo(protocolo)
+    if not valido_proto:
+        registrar_auditoria("PUERTO", f"{res_pto}/{protocolo}", "DESBLOQUEO", usuario, ip_origen, False, res_proto)
+        return {"ok": False, "mensaje": res_proto}
 
-def bloquear_ip(ip):
-    """
-    Crea una regla en el Firewall de Windows para bloquear todo el tráfico
-    proveniente de una dirección IP atacante.
-    """
-    # Validación básica de dirección IPv4
-    patron_ip = r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
-    if not re.match(patron_ip, ip):
-        return {"ok": False, "mensaje": "Formato de dirección IP inválido."}
+    puerto_num = res_pto
+    proto_str = res_proto
+    objetivo = f"{puerto_num}/{proto_str}"
+    nombre_regla = f"{PREFIJO_REGLA}BLOCK_PORT_{puerto_num}_{proto_str}"
 
-    nombre_regla = f"{PREFIJO_REGLA}BLOCK_IP_{ip.replace('.', '_')}"
-    comando = (
-        f'netsh advfirewall firewall add rule name="{nombre_regla}" '
-        f'dir=in action=block remoteip={ip}'
-    )
-    res = ejecutar_comando_firewall(comando)
+    argumentos = [
+        "netsh", "advfirewall", "firewall", "delete", "rule",
+        f"name={nombre_regla}"
+    ]
+
+    res = ejecutar_comando_firewall(argumentos)
     if res["ok"]:
-        res["nombre_regla"] = nombre_regla
-        res["ip"] = ip
+        marcar_retiro_auditoria(objetivo, usuario)
+
+    registrar_auditoria("PUERTO", objetivo, "DESBLOQUEO", usuario, ip_origen, res["ok"], res["mensaje"])
     return res
 
 
-def desbloquear_ip(ip):
-    """Elimina la regla de bloqueo para una dirección IP específica."""
-    nombre_regla = f"{PREFIJO_REGLA}BLOCK_IP_{ip.replace('.', '_')}"
-    comando = f'netsh advfirewall firewall delete rule name="{nombre_regla}"'
-    return ejecutar_comando_firewall(comando)
+def bloquear_ip(ip, usuario="admin", ip_origen="127.0.0.1"):
+    """
+    Crea una regla en el Firewall de Windows para bloquear el tráfico proveniente
+    de una dirección IP atacante, documentando la acción en la bitácora de auditoría.
+    """
+    valida, res_ip = validar_ip(ip)
+    if not valida:
+        registrar_auditoria("IP", str(ip), "BLOQUEO", usuario, ip_origen, False, res_ip)
+        return {"ok": False, "mensaje": res_ip}
+
+    ip_valida = res_ip
+    nombre_regla = f"{PREFIJO_REGLA}BLOCK_IP_{ip_valida.replace('.', '_')}"
+
+    argumentos = [
+        "netsh", "advfirewall", "firewall", "add", "rule",
+        f"name={nombre_regla}",
+        "dir=in",
+        "action=block",
+        f"remoteip={ip_valida}"
+    ]
+
+    res = ejecutar_comando_firewall(argumentos)
+    registrar_auditoria("IP", ip_valida, "BLOQUEO", usuario, ip_origen, res["ok"], res["mensaje"])
+
+    if res["ok"]:
+        res["nombre_regla"] = nombre_regla
+        res["ip"] = ip_valida
+    return res
+
+
+def desbloquear_ip(ip, usuario="admin", ip_origen="127.0.0.1"):
+    """
+    Elimina la regla de bloqueo para una dirección IP específica,
+    registrando en la auditoría el momento del retiro y el usuario que lo solicitó.
+    """
+    valida, res_ip = validar_ip(ip)
+    if not valida:
+        registrar_auditoria("IP", str(ip), "DESBLOQUEO", usuario, ip_origen, False, res_ip)
+        return {"ok": False, "mensaje": res_ip}
+
+    ip_valida = res_ip
+    nombre_regla = f"{PREFIJO_REGLA}BLOCK_IP_{ip_valida.replace('.', '_')}"
+
+    argumentos = [
+        "netsh", "advfirewall", "firewall", "delete", "rule",
+        f"name={nombre_regla}"
+    ]
+
+    res = ejecutar_comando_firewall(argumentos)
+    if res["ok"]:
+        marcar_retiro_auditoria(ip_valida, usuario)
+
+    registrar_auditoria("IP", ip_valida, "DESBLOQUEO", usuario, ip_origen, res["ok"], res["mensaje"])
+    return res
 
 
 def listar_reglas_nids():
@@ -111,11 +283,11 @@ def listar_reglas_nids():
     Consulta en el Firewall de Windows todas las reglas de bloqueo activas
     que hayan sido generadas por este sistema.
     """
-    comando = f'netsh advfirewall firewall show rule name=all'
+    argumentos = ["netsh", "advfirewall", "firewall", "show", "rule", "name=all"]
     try:
         resultado = subprocess.run(
-            comando,
-            shell=True,
+            argumentos,
+            shell=False,
             capture_output=True,
             text=True,
             encoding="cp850",
@@ -141,8 +313,8 @@ def listar_reglas_nids():
                         "accion": info.get("Acción") or info.get("Action", "Bloquear"),
                         "direccion": info.get("Dirección") or info.get("Direction", "Entrada"),
                         "protocolo": info.get("Protocolo") or info.get("Protocol", "Cualquiera"),
-                        "puerto_local": info.get("LocalPort", "N/A"),
-                        "ip_remota": info.get("RemoteIP", "N/A"),
+                        "puerto_local": info.get("LocalPort") or info.get("Puerto local", "N/A"),
+                        "ip_remota": info.get("RemoteIP") or info.get("IP remota", "N/A"),
                     })
         return reglas
     except Exception as e:

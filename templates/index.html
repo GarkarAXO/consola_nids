@@ -31,6 +31,11 @@
     <button id="btnRefrescar" title="Volver a buscar interfaces">↻</button>
     <button class="exito" id="btnConectar">Conectar</button>
     <button id="btnProbarDeteccion" class="secundario" title="Simula un escaneo de puertos de prueba para verificar la detección">Probar Detección</button>
+
+    <!-- Control de autenticación de sesión -->
+    <div class="area-auth">
+      <button id="btnAuth" class="secundario">Iniciar Sesión</button>
+    </div>
   </header>
 
   <!-- Navegación por pestañas -->
@@ -39,6 +44,7 @@
     <button data-vista="alertas">Alertas<span class="contador" id="cntAlertas" hidden>0</span></button>
     <button data-vista="bitacora">Bitácora</button>
     <button data-vista="puertos">Puertos Locales</button>
+    <button data-vista="firewall">Firewall y Auditoría</button>
     <button data-vista="config">Configuración</button>
   </nav>
 
@@ -175,6 +181,71 @@
       </div>
     </section>
 
+    <!-- VISTA: FIREWALL Y AUDITORÍA DE MITIGACIÓN -->
+    <section class="vista" id="firewall">
+      <div class="panel">
+        <h3>
+          Reglas activas en Windows Firewall (IPS)
+          <button id="btnRefrescarReglas" class="secundario">↻ Actualizar Reglas</button>
+        </h3>
+        <div class="tabla" style="max-height:300px">
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre de Regla</th>
+                <th>Acción</th>
+                <th>Dirección</th>
+                <th>Protocolo</th>
+                <th>Puerto Local</th>
+                <th>IP Remota</th>
+                <th>Mitigación</th>
+              </tr>
+            </thead>
+            <tbody id="tbReglasFirewall">
+              <tr><td colspan="7" class="vacio">Consultando reglas del firewall...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>
+          Registro de auditoría de bloqueos y retiros
+          <button id="btnRefrescarAuditoria" class="secundario">↻ Actualizar Auditoría</button>
+        </h3>
+        <div class="filtros">
+          <select id="fAccionAuditoria">
+            <option value="">Todas las acciones</option>
+            <option value="BLOQUEO">Bloqueos</option>
+            <option value="DESBLOQUEO">Desbloqueos</option>
+          </select>
+          <input id="fTextoAuditoria" placeholder="Buscar por objetivo, solicitante o detalle...">
+        </div>
+        <div class="tabla" style="max-height:450px">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Acción</th>
+                <th>Tipo</th>
+                <th>Objetivo</th>
+                <th>Solicitado por</th>
+                <th>IP Origen</th>
+                <th>Fecha Aplicación</th>
+                <th>Fecha Retiro</th>
+                <th>Retirado por</th>
+                <th>Estado</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody id="tbAuditoria">
+              <tr><td colspan="11" class="vacio">Sin registros de auditoría</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- Parámetros del sistema -->
     <section class="vista" id="config">
       <div class="panel">
@@ -186,6 +257,29 @@
       </div>
     </section>
   </main>
+
+  <!-- Ventana modal de autenticación administrativa -->
+  <div class="modal-fondo" id="modalLogin" hidden>
+    <div class="modal-caja">
+      <h3>Autenticación Administrativa</h3>
+      <p class="modal-desc">Inicia sesión con credenciales de administrador para aplicar bloqueos, capturar tráfico o modificar parámetros.</p>
+      <form id="formLogin" onsubmit="return false;">
+        <div class="campo" style="margin-bottom:12px">
+          <label for="txtUsuario">Usuario</label>
+          <input type="text" id="txtUsuario" value="admin" required autocomplete="username">
+        </div>
+        <div class="campo" style="margin-bottom:14px">
+          <label for="txtPassword">Contraseña</label>
+          <input type="password" id="txtPassword" placeholder="Contraseña de administrador" required autocomplete="current-password">
+        </div>
+        <div id="msgLoginError" class="modal-error" hidden></div>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px">
+          <button type="button" id="btnCancelarLogin" class="secundario">Cancelar</button>
+          <button type="submit" id="btnEnviarLogin" class="primario">Ingresar</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- Notificación emergente -->
   <div class="aviso" id="aviso"></div>

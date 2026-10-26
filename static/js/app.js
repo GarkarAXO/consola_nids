@@ -17,6 +17,8 @@ const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({
 
 let conectado = false;
 let ultimoTotalAlertas = 0;
+let sesionAutenticada = false;
+let cacheAuditoria = [];
 
 // Descripciones de parámetros para la pestaña de configuración
 const AYUDA = {
@@ -31,6 +33,7 @@ const AYUDA = {
 // Despliegue de notificaciones temporales en pantalla
 function aviso(texto) {
   const a = $("#aviso");
+  if (!a) return;
   a.textContent = texto;
   a.classList.add("ver");
   clearTimeout(a._t);
@@ -64,9 +67,119 @@ async function api(url, datos) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(datos)
       };
-  const respuesta = await fetch(url, opciones);
-  return respuesta.json();
+  try {
+    const respuesta = await fetch(url, opciones);
+    const json = await respuesta.json();
+    if (respuesta.status === 401) {
+      actualizarUIAuth(false);
+      abrirModalLogin(json.mensaje || "Autenticación administrativa requerida.");
+    }
+    return json;
+  } catch (e) {
+    return { ok: false, mensaje: "Error de comunicación con el servidor." };
+  }
 }
+
+// Gestión de autenticación administrativa y modal de inicio de sesión
+
+function abrirModalLogin(mensajeError) {
+  const modal = $("#modalLogin");
+  const errBox = $("#msgLoginError");
+  if (!modal) return;
+  modal.hidden = false;
+  if (errBox) {
+    if (mensajeError) {
+      errBox.textContent = mensajeError;
+      errBox.hidden = false;
+    } else {
+      errBox.hidden = true;
+    }
+  }
+  const txtPass = $("#txtPassword");
+  if (txtPass) {
+    txtPass.value = "";
+    setTimeout(() => txtPass.focus(), 50);
+  }
+}
+
+function cerrarModalLogin() {
+  const modal = $("#modalLogin");
+  if (modal) modal.hidden = true;
+}
+
+function actualizarUIAuth(autenticado) {
+  sesionAutenticada = Boolean(autenticado);
+  const btn = $("#btnAuth");
+  if (!btn) return;
+
+  if (sesionAutenticada) {
+    btn.textContent = "Cerrar Sesión";
+    btn.className = "secundario";
+  } else {
+    btn.textContent = "Iniciar Sesión";
+    btn.className = "primario";
+  }
+}
+
+async function consultarEstadoAuth() {
+  const r = await api("/api/auth/estado");
+  actualizarUIAuth(r.autenticado);
+}
+
+async function iniciarSesion() {
+  const usuario = $("#txtUsuario") ? $("#txtUsuario").value.trim() : "";
+  const password = $("#txtPassword") ? $("#txtPassword").value.trim() : "";
+  const errBox = $("#msgLoginError");
+
+  if (!usuario || !password) {
+    if (errBox) {
+      errBox.textContent = "Por favor ingresa usuario y contraseña.";
+      errBox.hidden = false;
+    }
+    return;
+  }
+
+  const r = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ usuario, password })
+  });
+  const res = await r.json();
+
+  if (r.ok && res.ok) {
+    cerrarModalLogin();
+    actualizarUIAuth(true);
+    aviso(res.mensaje);
+    if ($("#firewall") && $("#firewall").classList.contains("activa")) {
+      cargarAuditoriaFirewall();
+    }
+  } else {
+    if (errBox) {
+      errBox.textContent = res.mensaje || "Credenciales incorrectas.";
+      errBox.hidden = false;
+    }
+  }
+}
+
+async function cerrarSesion() {
+  const r = await api("/api/logout", {});
+  actualizarUIAuth(false);
+  aviso(r.mensaje || "Sesión finalizada.");
+}
+
+// Configuración de escuchas para el módulo de autenticación
+if ($("#btnAuth")) {
+  $("#btnAuth").onclick = () => {
+    if (sesionAutenticada) {
+      cerrarSesion();
+    } else {
+      abrirModalLogin();
+    }
+  };
+}
+
+if ($("#btnCancelarLogin")) $("#btnCancelarLogin").onclick = cerrarModalLogin;
+if ($("#formLogin")) $("#formLogin").onsubmit = iniciarSesion;
 
 // Alternancia entre vistas desde los botones de navegación
 document.querySelectorAll("nav button").forEach(boton => {
@@ -77,6 +190,10 @@ document.querySelectorAll("nav button").forEach(boton => {
 
     if (boton.dataset.vista === "bitacora") cargarBitacora();
     if (boton.dataset.vista === "puertos") cargarPuertosLocales();
+    if (boton.dataset.vista === "firewall") {
+      cargarReglasFirewall();
+      cargarAuditoriaFirewall();
+    }
     if (boton.dataset.vista === "config") cargarConfig();
     if (boton.dataset.vista === "alertas") {
       ultimoTotalAlertas = -1;
@@ -88,27 +205,32 @@ document.querySelectorAll("nav button").forEach(boton => {
 // Obtención del catálogo de tarjetas de red disponibles
 async function cargarInterfaces() {
   const lista = await api("/api/interfaces");
+  if (!Array.isArray(lista)) return;
   $("#selInterfaz").innerHTML = lista.map(i =>
     `<option value="${esc(i.nombre)}">${esc(i.nombre)}${i.ip ? " · " + esc(i.ip) : ""}${i.activa ? "" : " (inactiva)"}</option>`
   ).join("") || "<option>No se encontraron interfaces</option>";
 }
 
-$("#btnRefrescar").onclick = cargarInterfaces;
+if ($("#btnRefrescar")) $("#btnRefrescar").onclick = cargarInterfaces;
 
 // Conexión o desconexión del proceso de captura
-$("#btnConectar").onclick = async () => {
-  const r = conectado
-    ? await api("/api/desconectar", {})
-    : await api("/api/conectar", { interfaz: $("#selInterfaz").value });
-  aviso(r.mensaje);
-  actualizar();
-};
+if ($("#btnConectar")) {
+  $("#btnConectar").onclick = async () => {
+    const r = conectado
+      ? await api("/api/desconectar", {})
+      : await api("/api/conectar", { interfaz: $("#selInterfaz").value });
+    aviso(r.mensaje);
+    actualizar();
+  };
+}
 
 // Limpieza de métricas de tráfico acumuladas
-$("#btnLimpiar").onclick = async () => {
-  await api("/api/limpiar", {});
-  actualizar();
-};
+if ($("#btnLimpiar")) {
+  $("#btnLimpiar").onclick = async () => {
+    await api("/api/limpiar", {});
+    actualizar();
+  };
+}
 
 // Trazado de la gráfica temporal de paquetes por segundo
 function dibujar(serie) {
@@ -205,6 +327,10 @@ async function accionBloquearIp(ip) {
   if (!confirm(`¿Confirmas el bloqueo de la IP atacante ${ip} en el Firewall de Windows?`)) return;
   const r = await api("/api/firewall/bloquear_ip", { ip });
   aviso(r.mensaje);
+  if ($("#firewall") && $("#firewall").classList.contains("activa")) {
+    cargarReglasFirewall();
+    cargarAuditoriaFirewall();
+  }
 }
 
 // Sondeo regular de métricas, volumen de tráfico y alertas recientes
@@ -212,6 +338,7 @@ async function actualizar() {
   let e;
   try {
     e = await api("/api/estado");
+    if (!e || e.ok === false) return;
   } catch {
     return;
   }
@@ -223,18 +350,18 @@ async function actualizar() {
   $("#btnConectar").className = conectado ? "peligro" : "exito";
   $("#selInterfaz").disabled = conectado;
 
-  $("#kPaq").textContent = e.paquetes.toLocaleString("es-MX");
-  $("#kBytes").textContent = bytes(e.bytes);
-  $("#kPps").textContent = e.pps[e.pps.length - 1];
-  $("#kAlta").textContent = e.por_severidad.alta;
-  $("#kMedBaja").textContent = e.por_severidad.media + " / " + e.por_severidad.baja;
-  $("#kTiempo").textContent = reloj(e.duracion);
+  $("#kPaq").textContent = (e.paquetes || 0).toLocaleString("es-MX");
+  $("#kBytes").textContent = bytes(e.bytes || 0);
+  $("#kPps").textContent = e.pps && e.pps.length ? e.pps[e.pps.length - 1] : 0;
+  $("#kAlta").textContent = e.por_severidad ? e.por_severidad.alta : 0;
+  $("#kMedBaja").textContent = e.por_severidad ? `${e.por_severidad.media} / ${e.por_severidad.baja}` : "0 / 0";
+  $("#kTiempo").textContent = reloj(e.duracion || 0);
 
-  dibujar(e.pps);
-  barras(e.protocolos, "#protocolos");
-  barras(Object.fromEntries(e.origenes.map(o => [o.ip, o.n])), "#origenes", true);
+  if (e.pps) dibujar(e.pps);
+  if (e.protocolos) barras(e.protocolos, "#protocolos");
+  if (e.origenes) barras(Object.fromEntries(e.origenes.map(o => [o.ip, o.n])), "#origenes", true);
 
-  $("#tbTrafico").innerHTML = e.paquetes_recientes.length
+  $("#tbTrafico").innerHTML = (e.paquetes_recientes && e.paquetes_recientes.length)
     ? e.paquetes_recientes.map(p =>
         `<tr>
           <td class="mono">${esc(p.hora)}</td>
@@ -248,12 +375,12 @@ async function actualizar() {
       ).join("")
     : `<tr><td colspan="7" class="vacio">${conectado ? "Esperando paquetes del motor…" : "Conecta una interfaz para ver el tráfico"}</td></tr>`;
 
-  $("#listaAlertas").innerHTML = e.alertas_recientes.length
+  $("#listaAlertas").innerHTML = (e.alertas_recientes && e.alertas_recientes.length)
     ? e.alertas_recientes.map(tarjetaAlerta).join("")
     : '<div class="vacio">No hay alertas. Cuando el motor detecte algo aparecerá aquí.</div>';
 
   if (ultimoTotalAlertas === -1) ultimoTotalAlertas = e.total_alertas;
-  const nuevas = e.total_alertas - ultimoTotalAlertas;
+  const nuevas = (e.total_alertas || 0) - ultimoTotalAlertas;
   if (nuevas > 0 && !$("#alertas").classList.contains("activa")) {
     $("#cntAlertas").hidden = false;
     $("#cntAlertas").textContent = nuevas;
@@ -267,6 +394,7 @@ async function actualizar() {
 async function cargarBitacora() {
   const q = new URLSearchParams({ severidad: $("#fSev").value, q: $("#fTexto").value });
   const filas = await api("/api/bitacora?" + q);
+  if (!Array.isArray(filas)) return;
   $("#tbBitacora").innerHTML = filas.length
     ? filas.map(a =>
         `<tr>
@@ -293,10 +421,12 @@ async function marcar(id) {
   cargarBitacora();
 }
 
-$("#btnBuscar").onclick = cargarBitacora;
-$("#fTexto").onkeydown = e => {
-  if (e.key === "Enter") cargarBitacora();
-};
+if ($("#btnBuscar")) $("#btnBuscar").onclick = cargarBitacora;
+if ($("#fTexto")) {
+  $("#fTexto").onkeydown = e => {
+    if (e.key === "Enter") cargarBitacora();
+  };
+}
 
 // Consulta de puertos locales y procesos asociados (Host IDS)
 let cachePuertosLocales = [];
@@ -315,7 +445,7 @@ function renderizarTablaPuertos() {
   const fProto = $("#fProtoPuerto") ? $("#fProtoPuerto").value : "";
   const fTexto = $("#fTextoPuerto") ? $("#fTextoPuerto").value.toLowerCase().trim() : "";
 
-  const filtrados = cachePuertosLocales.filter(p => {
+  const filtrados = (cachePuertosLocales || []).filter(p => {
     const coincideProto = !fProto || p.protocolo === fProto;
     const textoCompleto = `${p.puerto} ${p.proceso} ${p.servicio} ${p.descripcion} ${p.ruta_ejecutable}`.toLowerCase();
     const coincideTexto = !fTexto || textoCompleto.includes(fTexto);
@@ -346,6 +476,10 @@ async function accionBloquearPuerto(puerto, protocolo) {
   if (!confirm(`¿Confirmas el bloqueo del puerto ${puerto} (${protocolo}) en el Firewall?`)) return;
   const r = await api("/api/firewall/bloquear_puerto", { puerto, protocolo });
   aviso(r.mensaje);
+  if ($("#firewall") && $("#firewall").classList.contains("activa")) {
+    cargarReglasFirewall();
+    cargarAuditoriaFirewall();
+  }
 }
 
 if ($("#btnRefrescarPuertos")) $("#btnRefrescarPuertos").onclick = cargarPuertosLocales;
@@ -362,9 +496,130 @@ if ($("#btnProbarDeteccion")) {
   };
 }
 
+// Gestión de reglas de mitigación en Firewall y bitácora de auditoría
+
+async function cargarReglasFirewall() {
+  const tb = $("#tbReglasFirewall");
+  if (!tb) return;
+  tb.innerHTML = '<tr><td colspan="7" class="vacio">Consultando reglas del Firewall de Windows...</td></tr>';
+
+  const reglas = await api("/api/firewall/reglas");
+  if (!Array.isArray(reglas)) {
+    tb.innerHTML = '<tr><td colspan="7" class="vacio">Error al consultar las reglas del firewall.</td></tr>';
+    return;
+  }
+
+  if (reglas.length === 0) {
+    tb.innerHTML = '<tr><td colspan="7" class="vacio">No existen reglas activas creadas por el sistema NIDS.</td></tr>';
+    return;
+  }
+
+  tb.innerHTML = reglas.map(r => {
+    if (r.error) {
+      return `<tr><td colspan="7" class="vacio">${esc(r.error)}</td></tr>`;
+    }
+    const esReglaPuerto = r.nombre.includes("BLOCK_PORT_");
+    const esReglaIp = r.nombre.includes("BLOCK_IP_");
+    let botonRetiro = "";
+
+    if (esReglaPuerto) {
+      const partes = r.nombre.replace("NIDS_RULE_BLOCK_PORT_", "").split("_");
+      const pto = partes[0];
+      const proto = partes[1] || "TCP";
+      botonRetiro = `<button class="peligro" style="padding:3px 8px; font-size:11px" onclick="accionDesbloquearPuertoDirecto(${pto}, '${esc(proto)}')">Retirar Regla</button>`;
+    } else if (esReglaIp) {
+      const ip = r.nombre.replace("NIDS_RULE_BLOCK_IP_", "").replace(/_/g, ".");
+      botonRetiro = `<button class="peligro" style="padding:3px 8px; font-size:11px" onclick="accionDesbloquearIpDirecto('${esc(ip)}')">Retirar Regla</button>`;
+    }
+
+    return `<tr>
+      <td class="mono"><b>${esc(r.nombre)}</b></td>
+      <td><span class="sev alta">${esc(r.accion)}</span></td>
+      <td>${esc(r.direccion)}</td>
+      <td><span class="sev ${r.protocolo === "TCP" ? "media" : "baja"}">${esc(r.protocolo)}</span></td>
+      <td class="mono">${esc(r.puerto_local)}</td>
+      <td class="mono">${esc(r.ip_remota)}</td>
+      <td>${botonRetiro}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function accionDesbloquearPuertoDirecto(puerto, protocolo) {
+  if (!confirm(`¿Confirmas el retiro del bloqueo para el puerto ${puerto} (${protocolo})?`)) return;
+  const r = await api("/api/firewall/desbloquear_puerto", { puerto, protocolo });
+  aviso(r.mensaje);
+  cargarReglasFirewall();
+  cargarAuditoriaFirewall();
+}
+
+async function accionDesbloquearIpDirecto(ip) {
+  if (!confirm(`¿Confirmas el retiro del bloqueo para la dirección IP ${ip}?`)) return;
+  const r = await api("/api/firewall/desbloquear_ip", { ip });
+  aviso(r.mensaje);
+  cargarReglasFirewall();
+  cargarAuditoriaFirewall();
+}
+
+async function cargarAuditoriaFirewall() {
+  const tb = $("#tbAuditoria");
+  if (!tb) return;
+  try {
+    cacheAuditoria = await api("/api/firewall/auditoria");
+    renderizarTablaAuditoria();
+  } catch {
+    tb.innerHTML = '<tr><td colspan="11" class="vacio">Error al obtener registros de auditoría.</td></tr>';
+  }
+}
+
+function renderizarTablaAuditoria() {
+  const tb = $("#tbAuditoria");
+  if (!tb) return;
+  const fAccion = $("#fAccionAuditoria") ? $("#fAccionAuditoria").value : "";
+  const fTexto = $("#fTextoAuditoria") ? $("#fTextoAuditoria").value.toLowerCase().trim() : "";
+
+  const filtrados = (cacheAuditoria || []).filter(item => {
+    const coincideAccion = !fAccion || item.accion === fAccion;
+    const cadena = `${item.objetivo} ${item.solicitado_por} ${item.retirado_por || ""} ${item.detalle} ${item.estado}`.toLowerCase();
+    const coincideTexto = !fTexto || cadena.includes(fTexto);
+    return coincideAccion && coincideTexto;
+  });
+
+  if (!filtrados.length) {
+    tb.innerHTML = '<tr><td colspan="11" class="vacio">No hay eventos en la bitácora de auditoría con los criterios seleccionados.</td></tr>';
+    return;
+  }
+
+  tb.innerHTML = filtrados.map(ev => {
+    const claseAccion = ev.accion === "BLOQUEO" ? "badge-bloqueo" : "badge-desbloqueo";
+    const claseEstado = ev.estado === "ACTIVO"
+      ? "badge-activo"
+      : (ev.estado === "RETIRADO" ? "badge-retirado" : "badge-fallido");
+
+    return `<tr>
+      <td class="mono">${ev.id}</td>
+      <td><span class="badge-accion ${claseAccion}">${esc(ev.accion)}</span></td>
+      <td>${esc(ev.tipo)}</td>
+      <td class="mono"><b>${esc(ev.objetivo)}</b></td>
+      <td><b>${esc(ev.solicitado_por)}</b></td>
+      <td class="mono">${esc(ev.ip_origen)}</td>
+      <td class="mono">${esc(ev.fecha_aplicacion || "-")}</td>
+      <td class="mono">${esc(ev.fecha_retiro || "-")}</td>
+      <td>${esc(ev.retirado_por || "-")}</td>
+      <td><span class="badge-estado ${claseEstado}">${esc(ev.estado)}</span></td>
+      <td style="max-width:250px; overflow:hidden; text-overflow:ellipsis;" title="${esc(ev.detalle)}">${esc(ev.detalle)}</td>
+    </tr>`;
+  }).join("");
+}
+
+if ($("#btnRefrescarReglas")) $("#btnRefrescarReglas").onclick = cargarReglasFirewall;
+if ($("#btnRefrescarAuditoria")) $("#btnRefrescarAuditoria").onclick = cargarAuditoriaFirewall;
+if ($("#fAccionAuditoria")) $("#fAccionAuditoria").onchange = renderizarTablaAuditoria;
+if ($("#fTextoAuditoria")) $("#fTextoAuditoria").oninput = renderizarTablaAuditoria;
+
 // Generación dinámica del formulario de parámetros
 async function cargarConfig() {
   const c = await api("/api/config");
+  if (!c || c.ok === false) return;
   $("#formConfig").innerHTML = Object.entries(c).map(([k, v]) => {
     const [titulo, ayuda] = AYUDA[k] || [k, ""];
     const control = k === "notificar_severidad_minima"
@@ -375,18 +630,21 @@ async function cargarConfig() {
 }
 
 // Envío de la configuración actualizada al servidor
-$("#btnGuardar").onclick = async () => {
-  const datos = {};
-  document.querySelectorAll("#formConfig [data-k]").forEach(i => {
-    datos[i.dataset.k] = i.type === "number" ? Number(i.value) : i.value;
-  });
-  const r = await api("/api/config", datos);
-  aviso(r.ok ? "Configuración guardada" : "No se pudo guardar");
-};
+if ($("#btnGuardar")) {
+  $("#btnGuardar").onclick = async () => {
+    const datos = {};
+    document.querySelectorAll("#formConfig [data-k]").forEach(i => {
+      datos[i.dataset.k] = i.type === "number" ? Number(i.value) : i.value;
+    });
+    const r = await api("/api/config", datos);
+    aviso(r.ok ? "Configuración guardada" : (r.mensaje || "No se pudo guardar"));
+  };
+}
 
 // Enlace de redimensionamiento e inicialización general
 window.onresize = () => actualizar();
 
+consultarEstadoAuth();
 cargarInterfaces();
 actualizar();
 setInterval(actualizar, 1000);

@@ -520,6 +520,124 @@ td.mono, .mono {
 }
 
 
+/* Área de autenticación en cabecera */
+.area-auth {
+  display: flex;
+  align-items: center;
+  margin-left: 6px;
+}
+
+/* Ventana modal de autenticación */
+.modal-fondo {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 16px;
+}
+
+.modal-fondo[hidden] {
+  display: none;
+}
+
+.modal-caja {
+  background: #ffffff;
+  border-radius: 12px;
+  border: 1px solid var(--borde);
+  width: 100%;
+  max-width: 400px;
+  padding: 24px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.12);
+  animation: modalEntrada 0.2s ease-out;
+}
+
+@keyframes modalEntrada {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.modal-caja h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  color: var(--guinda);
+  font-weight: 700;
+}
+
+.modal-desc {
+  margin: 0 0 16px;
+  color: var(--tenue);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.modal-error {
+  background: var(--alta-suave);
+  color: var(--alta-texto);
+  border: 1px solid #fecaca;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  margin-top: 10px;
+}
+
+.modal-error[hidden] {
+  display: none;
+}
+
+/* Distintivos específicos de la bitácora de auditoría */
+.badge-accion {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.badge-bloqueo {
+  background: var(--alta-suave);
+  color: var(--alta-texto);
+}
+
+.badge-desbloqueo {
+  background: var(--esmeralda-suave);
+  color: var(--esmeralda-oscuro);
+}
+
+.badge-estado {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.badge-activo {
+  background: var(--alta-suave);
+  color: var(--alta-texto);
+}
+
+.badge-retirado {
+  background: var(--panel2);
+  color: var(--tenue);
+  border: 1px solid var(--borde);
+}
+
+.badge-fallido {
+  background: var(--media-suave);
+  color: var(--media-texto);
+}
+
 /* Aviso emergente con borde de confirmación esmeralda */
 .aviso {
   position: fixed;

@@ -67,9 +67,14 @@ Este documento centraliza el estado actual del proyecto, los componentes impleme
 - [ ] Crear un archivo de configuración persistente (`config.json` o tabla en base de datos) para que los umbrales modificados por el usuario no se pierdan al reiniciar la aplicación.
 
 ### Seguridad y Robustecimiento
-- [ ] Mitigar vulnerabilidad de inyección de fórmulas CSV anteponiendo un apóstrofe (`'`) a campos que inicien con `=`, `+`, `-` o `@`.
-- [ ] Implementar validación y tipado estricto en el endpoint `POST /api/config` para evitar errores 500 ante entradas incorrectas.
-- [ ] Incorporar un mecanismo de autenticación básica o control de sesiones para restringir el acceso a la consola administrativa.
+- [x] Mitigar vulnerabilidad de inyección de fórmulas CSV anteponiendo un apóstrofe (`'`) a campos que inicien con `=`, `+`, `-` o `@`.
+- [x] Implementar validación y tipado estricto en el endpoint `POST /api/config` para evitar errores 500 ante entradas incorrectas.
+- [x] Incorporar un mecanismo de autenticación y control de sesiones para restringir el acceso a la consola administrativa (`/api/login`, cookies de sesión y tokens de API).
+- [x] Restringir y validar estrictamente los endpoints administrativos (`/api/conectar`, `/api/desconectar`, `/api/limpiar`, `/api/simular_ataque`, endpoints de firewall).
+- [x] Validación estricta de direcciones IP con el estándar IPv4 (descartando loopback, multidifusión e inyecciones de comandos) mediante `ipaddress`.
+- [x] Validación estricta de puertos (1 a 65535) y protocolos permitidos (TCP / UDP).
+- [x] Ejecución segura de llamadas al sistema con `subprocess.run` pasando listas de argumentos y desactivando el intérprete de comandos (`shell=False`).
+- [x] Módulo y pestaña web de Auditoría de Firewall (IPS Audit Trail) que documenta solicitante, fecha y hora de aplicación, momento de retiro y estado de cada mitigación.
 - [ ] Añadir protección contra peticiones cruzadas no autorizadas (CSRF).
 - [ ] Preparar el despliegue con un servidor WSGI de producción para Windows (como Waitress) para evitar limitaciones del servidor de desarrollo Werkzeug.
 

@@ -55,10 +55,10 @@ class MotorDeteccion:
         if src in lista_blanca:
             return
 
-        ventana = cfg.get("ventana_seg", 5)
-        umbral_conexiones = cfg.get("umbral_conexiones", 10)
-        umbral_pps = cfg.get("umbral_pps", 500)
-        enfriamiento = cfg.get("enfriamiento_seg", 30)
+        ventana = cfg.get("ventana_seg", 10)
+        umbral_conexiones = cfg.get("umbral_conexiones", 8)
+        umbral_pps = cfg.get("umbral_pps", 300)
+        enfriamiento = cfg.get("enfriamiento_seg", 20)
 
         # -------------------------------------------------------------------
         # Regla 1: Detección de Escaneo de Puertos (Port Scanning por Anomalía)
@@ -193,6 +193,18 @@ class CapturadorRed:
             if puerto_dst == 53 or puerto_src == 53:
                 nombre_proto = "DNS"
                 info = "Consulta de dominio"
+            elif puerto_dst == 5353 or puerto_src == 5353:
+                nombre_proto = "mDNS"
+                info = "Descubrimiento de servicios (Multicast DNS)"
+            elif puerto_dst == 1900 or puerto_src == 1900:
+                nombre_proto = "SSDP"
+                info = "Descubrimiento de dispositivos UPnP"
+            elif puerto_dst in (67, 68) or puerto_src in (67, 68):
+                nombre_proto = "DHCP"
+                info = "Asignación dinámica de IP"
+            elif puerto_dst == 123 or puerto_src == 123:
+                nombre_proto = "NTP"
+                info = "Sincronización de hora de red"
             else:
                 info = f"Longitud UDP: {len(payload)}"
         elif protocolo_num == 1 and len(payload) >= 2:  # ICMP

@@ -14,7 +14,7 @@ Sistema híbrido de detección de intrusos en red y equipo desarrollado para la 
 1. Contar con Python 3.10 o superior (marcar la casilla *"Add Python to PATH"* durante la instalación).
 2. Abrir una terminal en el directorio del proyecto e instalar las dependencias:
    ```powershell
-   pip install flask psutil
+   pip install flask psutil python-dotenv
    ```
 3. Iniciar la consola de gestión:
    ```powershell
@@ -35,9 +35,21 @@ Sistema híbrido de detección de intrusos en red y equipo desarrollado para la 
 | :--- | :--- |
 | **Monitor** | Métricas en tiempo real (paquetes totales, bytes, duración), gráfica temporal de paquetes/segundo (PPS), barras de protocolos e IPs más activas, y tabla de inspección de tráfico en vivo. |
 | **Alertas** | Tarjetas clasificadas por nivel de severidad (alta, media, baja) con botón directo para bloquear la IP atacante en el Firewall. |
-| **Bitácora** | Historial filtrable por severidad y búsqueda textual, opción para marcar alertas como revisadas y exportación de evidencias a formato CSV. |
+| **Bitácora** | Historial filtrable por severidad y búsqueda textual, opción para marcar alertas como revisadas y exportación de evidencias a formato CSV protegido contra inyección de fórmulas. |
 | **Puertos Locales** | Módulo Host IDS (HIDS) que lista todos los puertos en escucha en el equipo, clasifica su rango IANA, identifica el proceso y muestra la ruta exacta del ejecutable en disco, con opción de bloqueo directo. |
-| **Configuración** | Ajuste dinámico de parámetros de detección (ventana de análisis en segundos, umbrales de conexiones por host, límite de paquetes/s, tiempo de enfriamiento y lista blanca de IPs). |
+| **Firewall y Auditoría** | Inspección y revocación directa de reglas activas en Windows Firewall, junto con la bitácora de auditoría (IPS Audit Trail) que documenta quién solicitó cada bloqueo, cuándo se aplicó y cuándo se retiró. |
+| **Configuración** | Ajuste dinámico de parámetros de detección (ventana de análisis en segundos, umbrales de conexiones por host, límite de paquetes/s, tiempo de enfriamiento y lista blanca de IPs) con validación estricta de rangos. |
+
+---
+
+## 3. Autenticación y Credenciales Administrativas
+
+Dado que el proceso requiere ejecutarse con privilegios elevados de Administrador en Windows para la captura promiscua y la configuración de `netsh`, todos los endpoints que modifican el estado del sistema o las reglas del cortafuegos están estrictamente protegidos:
+
+- **Usuario predeterminado:** `admin`
+- **Contraseña predeterminada:** `admin123`
+- **Token de API para scripts o integraciones:** `nids-admin-token-seguro` (vía encabezado `X-API-Key` o `Authorization: Bearer <token>`).
+- Las credenciales pueden personalizarse mediante variables de entorno del sistema (`NIDS_ADMIN_USER`, `NIDS_ADMIN_PASSWORD`, `NIDS_API_KEY` y `NIDS_SECRET_KEY`).
 
 ---
 

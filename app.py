@@ -6,18 +6,23 @@ Este archivo coordina el funcionamiento de la consola de gestión para el sistem
 de detección de intrusos. Se encarga de recibir los datos de tráfico y las alertas
 que genera el motor de seguridad, mantener las estadísticas actualizadas en tiempo
 real y proveer los servicios necesarios para que el usuario pueda supervisar la
-red, consultar la bitácora y ajustar parámetros desde el navegador.
+red, consultar la bitácora y ajustar parámetros desde el navegador. Incorpora
+control de autenticación administrativa, validación estricta de parámetros y
+registro de auditoría para operaciones de mitigación.
 """
 
 import collections
 import csv
+import functools
 import io
+import os
+import secrets
 import threading
 import time
 from datetime import datetime
 
 import psutil
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, session
 
 import firewall
 import hids
@@ -25,6 +30,35 @@ import sniffer
 
 app = Flask(__name__)
 app.json.sort_keys = False
+
+# Carga de variables de entorno mediante python-dotenv con respaldo nativo
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    for _archivo_env in (".env", "env"):
+        if os.path.exists(_archivo_env):
+            try:
+                with open(_archivo_env, "r", encoding="utf-8") as _f_env:
+                    for _linea in _f_env:
+                        _linea = _linea.strip()
+                        if _linea and not _linea.startswith("#") and "=" in _linea:
+                            _k, _v = _linea.split("=", 1)
+                            _k = _k.strip()
+                            _v = _v.strip().strip('"').strip("'")
+                            if _k not in os.environ:
+                                os.environ[_k] = _v
+            except Exception:
+                pass
+
+# Clave secreta para gestión de sesiones seguras (generada aleatoriamente si no se define en .env)
+app.secret_key = os.environ.get("NIDS_SECRET_KEY") or secrets.token_hex(32)
+
+# Credenciales administrativas y token de API leídos estrictamente desde el entorno o archivo .env
+ADMIN_USUARIO = os.environ.get("NIDS_ADMIN_USER")
+ADMIN_PASSWORD = os.environ.get("NIDS_ADMIN_PASSWORD")
+ADMIN_API_KEY = os.environ.get("NIDS_API_KEY")
+
 lock = threading.Lock()
 
 # Estado operativo y métricas en memoria
@@ -44,10 +78,10 @@ _contador_segundo = 0
 
 # Parámetros editables para el análisis del motor de detección
 configuracion = {
-    "ventana_seg": 5,
-    "umbral_conexiones": 20,
-    "umbral_pps": 500,
-    "enfriamiento_seg": 30,
+    "ventana_seg": 10,
+    "umbral_conexiones": 8,
+    "umbral_pps": 300,
+    "enfriamiento_seg": 20,
     "lista_blanca": "192.168.1.1",
     "notificar_severidad_minima": "baja",
 }
@@ -56,6 +90,51 @@ configuracion = {
 def hora():
     """Retorna la hora actual del sistema en formato HH:MM:SS."""
     return datetime.now().strftime("%H:%M:%S")
+
+
+def sanitizar_campo_csv(valor):
+    """
+    Evita la inyección de fórmulas en hojas de cálculo (CSV Injection)
+    anteponiendo un apóstrofe a textos que inicien con caracteres ejecutables.
+    """
+    texto = str(valor if valor is not None else "")
+    if texto and texto[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + texto
+    return texto
+
+
+def requiere_autenticacion(f):
+    """
+    Restringe el acceso a endpoints administrativos verificando la existencia
+    de una sesión activa en cookies o la cabecera X-API-Key / Bearer Token.
+    """
+    @functools.wraps(f)
+    def decorada(*args, **kwargs):
+        if session.get("usuario"):
+            return f(*args, **kwargs)
+
+        api_key = request.headers.get("X-API-Key")
+        auth_header = request.headers.get("Authorization", "")
+        token_bearer = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else ""
+
+        if ADMIN_API_KEY and ((api_key and api_key == ADMIN_API_KEY) or (token_bearer and token_bearer == ADMIN_API_KEY)):
+            return f(*args, **kwargs)
+
+        return jsonify({
+            "ok": False,
+            "mensaje": "Acceso restringido. Se requiere autenticación como administrador.",
+            "codigo": "NO_AUTORIZADO",
+        }), 401
+    return decorada
+
+
+def obtener_actor_actual():
+    """
+    Identifica el nombre del usuario y la dirección IP que originó la petición.
+    """
+    usuario = session.get("usuario") or "Token-API"
+    ip_origen = request.headers.get("X-Forwarded-For", request.remote_addr or "127.0.0.1").split(",")[0].strip()
+    return usuario, ip_origen
 
 
 def registrar_paquete(p):
@@ -124,6 +203,45 @@ al_conectar = capturador.iniciar
 al_desconectar = capturador.detener
 
 
+# Rutas de autenticación y sesión
+
+@app.route("/api/auth/estado")
+def api_auth_estado():
+    """Consulta si la sesión actual cuenta con privilegios de administrador."""
+    usuario = session.get("usuario")
+    return jsonify({
+        "autenticado": bool(usuario),
+        "usuario": usuario or None,
+    })
+
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    """Valida credenciales de acceso administrativo e inicia sesión en el servidor."""
+    if not ADMIN_USUARIO or not ADMIN_PASSWORD:
+        return jsonify(
+            ok=False,
+            mensaje="Las credenciales de administrador no están configuradas en el archivo .env."
+        ), 500
+
+    datos = request.json or {}
+    usuario = str(datos.get("usuario", "")).strip()
+    password = str(datos.get("password", "")).strip()
+
+    if usuario == ADMIN_USUARIO and password == ADMIN_PASSWORD:
+        session["usuario"] = usuario
+        return jsonify(ok=True, usuario=usuario, mensaje="Sesión administrativa iniciada correctamente.")
+
+    return jsonify(ok=False, mensaje="Usuario o contraseña incorrectos."), 401
+
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    """Cierra la sesión administrativa activa y elimina los datos de sesión."""
+    session.clear()
+    return jsonify(ok=True, mensaje="Sesión finalizada.")
+
+
 # Rutas de la interfaz y servicios API
 
 @app.route("/")
@@ -163,6 +281,7 @@ def api_interfaces():
 
 
 @app.route("/api/conectar", methods=["POST"])
+@requiere_autenticacion
 def api_conectar():
     """
     Activa la supervisión en la interfaz de red indicada ejecutando
@@ -181,6 +300,7 @@ def api_conectar():
 
 
 @app.route("/api/desconectar", methods=["POST"])
+@requiere_autenticacion
 def api_desconectar():
     """
     Detiene el proceso de captura en la interfaz activa y actualiza
@@ -231,6 +351,7 @@ def api_bitacora():
 
 
 @app.route("/api/bitacora/<int:id_alerta>", methods=["POST"])
+@requiere_autenticacion
 def api_marcar(id_alerta):
     """Actualiza el estado de atención de una alerta dentro de la bitácora."""
     nuevo = (request.json or {}).get("estado", "Revisada")
@@ -246,7 +367,7 @@ def api_marcar(id_alerta):
 def api_csv():
     """
     Exporta el contenido completo de la bitácora en formato CSV
-    para su descarga y posterior revisión.
+    sanitizando cada celda para evitar inyección de fórmulas en hojas de cálculo.
     """
     with lock:
         filas = list(alertas)
@@ -254,9 +375,11 @@ def api_csv():
     campos = ["id", "fecha", "tipo", "severidad", "metodo", "src", "dst", "puerto", "descripcion", "estado"]
     w = csv.DictWriter(buf, fieldnames=campos, extrasaction="ignore")
     w.writeheader()
-    w.writerows(filas)
+    for fila in filas:
+        fila_saneada = {k: sanitizar_campo_csv(fila.get(k, "")) for k in campos}
+        w.writerow(fila_saneada)
     nombre = f"bitacora_nids_{datetime.now():%Y%m%d_%H%M}.csv"
-    return Response("﻿" + buf.getvalue(), mimetype="text/csv",
+    return Response("\ufeff" + buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": f"attachment; filename={nombre}"})
 
 
@@ -264,19 +387,95 @@ def api_csv():
 def api_config():
     """
     Permite consultar la configuración actual del motor o actualizar
-    sus valores a través de solicitudes POST.
+    sus valores previa autenticación y validación estricta de tipos y rangos.
     """
     if request.method == "POST":
+        if not session.get("usuario"):
+            api_key = request.headers.get("X-API-Key")
+            auth_header = request.headers.get("Authorization", "")
+            token_bearer = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else ""
+            autorizado_por_token = bool(ADMIN_API_KEY and (api_key == ADMIN_API_KEY or token_bearer == ADMIN_API_KEY))
+            if not autorizado_por_token:
+                return jsonify(ok=False, mensaje="Autenticación requerida para modificar configuración."), 401
+
         nuevos = request.json or {}
-        with lock:
-            for k, v in nuevos.items():
-                if k in configuracion:
-                    configuracion[k] = type(configuracion[k])(v)
+        errores = []
+
+        # Validación estricta de ventana temporal
+        if "ventana_seg" in nuevos:
+            try:
+                val = int(nuevos["ventana_seg"])
+                if 1 <= val <= 300:
+                    configuracion["ventana_seg"] = val
+                else:
+                    errores.append("La ventana de análisis debe estar entre 1 y 300 segundos.")
+            except (ValueError, TypeError):
+                errores.append("El valor de ventana_seg debe ser numérico.")
+
+        # Validación estricta de umbral de conexiones
+        if "umbral_conexiones" in nuevos:
+            try:
+                val = int(nuevos["umbral_conexiones"])
+                if 1 <= val <= 1000:
+                    configuracion["umbral_conexiones"] = val
+                else:
+                    errores.append("El umbral de conexiones debe estar entre 1 y 1000.")
+            except (ValueError, TypeError):
+                errores.append("El valor de umbral_conexiones debe ser numérico.")
+
+        # Validación estricta de umbral de paquetes por segundo
+        if "umbral_pps" in nuevos:
+            try:
+                val = int(nuevos["umbral_pps"])
+                if 1 <= val <= 50000:
+                    configuracion["umbral_pps"] = val
+                else:
+                    errores.append("El umbral de paquetes por segundo debe estar entre 1 y 50000.")
+            except (ValueError, TypeError):
+                errores.append("El valor de umbral_pps debe ser numérico.")
+
+        # Validación estricta de período de enfriamiento
+        if "enfriamiento_seg" in nuevos:
+            try:
+                val = int(nuevos["enfriamiento_seg"])
+                if 1 <= val <= 600:
+                    configuracion["enfriamiento_seg"] = val
+                else:
+                    errores.append("El tiempo de enfriamiento debe estar entre 1 y 600 segundos.")
+            except (ValueError, TypeError):
+                errores.append("El valor de enfriamiento_seg debe ser numérico.")
+
+        # Validación estricta de severidad mínima
+        if "notificar_severidad_minima" in nuevos:
+            val = str(nuevos["notificar_severidad_minima"]).strip().lower()
+            if val in ("baja", "media", "alta"):
+                configuracion["notificar_severidad_minima"] = val
+            else:
+                errores.append("La severidad mínima debe ser baja, media o alta.")
+
+        # Validación estricta de lista blanca de direcciones IP
+        if "lista_blanca" in nuevos:
+            ips = [ip.strip() for ip in str(nuevos["lista_blanca"]).split(",") if ip.strip()]
+            ips_validas = []
+            for ip in ips:
+                valida, resultado = firewall.validar_ip(ip)
+                if valida:
+                    ips_validas.append(resultado)
+                else:
+                    errores.append(f"Dirección IP no válida en lista blanca: {resultado}")
+            if not errores or len(ips_validas) == len(ips):
+                configuracion["lista_blanca"] = ", ".join(ips_validas)
+
+        if errores:
+            return jsonify(ok=False, mensaje="; ".join(errores)), 400
+
         return jsonify(ok=True, config=configuracion)
+
     return jsonify(configuracion)
 
 
 @app.route("/api/limpiar", methods=["POST"])
+@requiere_autenticacion
 def api_limpiar():
     """Restablece los acumuladores de paquetes y el historial de tráfico."""
     with lock:
@@ -288,55 +487,69 @@ def api_limpiar():
 
 
 @app.route("/api/firewall/bloquear_puerto", methods=["POST"])
+@requiere_autenticacion
 def api_firewall_bloquear_puerto():
-    """Bloquea un puerto local en el Firewall de Windows."""
+    """Bloquea un puerto local en el Firewall de Windows registrando la auditoría."""
     datos = request.json or {}
     puerto = datos.get("puerto")
     protocolo = datos.get("protocolo", "TCP")
-    if not puerto:
+    usuario, ip_origen = obtener_actor_actual()
+
+    if puerto is None:
         return jsonify(ok=False, mensaje="Se requiere indicar el puerto."), 400
-    try:
-        resultado = firewall.bloquear_puerto(int(puerto), protocolo)
-        return jsonify(resultado)
-    except ValueError:
-        return jsonify(ok=False, mensaje="El puerto debe ser un valor numérico."), 400
+
+    resultado = firewall.bloquear_puerto(puerto, protocolo, usuario=usuario, ip_origen=ip_origen)
+    codigo = 200 if resultado.get("ok") else 400
+    return jsonify(resultado), codigo
 
 
 @app.route("/api/firewall/desbloquear_puerto", methods=["POST"])
+@requiere_autenticacion
 def api_firewall_desbloquear_puerto():
-    """Elimina la regla de bloqueo de un puerto en el Firewall."""
+    """Elimina la regla de bloqueo de un puerto registrando el retiro en auditoría."""
     datos = request.json or {}
     puerto = datos.get("puerto")
     protocolo = datos.get("protocolo", "TCP")
-    if not puerto:
+    usuario, ip_origen = obtener_actor_actual()
+
+    if puerto is None:
         return jsonify(ok=False, mensaje="Se requiere indicar el puerto."), 400
-    try:
-        resultado = firewall.desbloquear_puerto(int(puerto), protocolo)
-        return jsonify(resultado)
-    except ValueError:
-        return jsonify(ok=False, mensaje="El puerto debe ser un valor numérico."), 400
+
+    resultado = firewall.desbloquear_puerto(puerto, protocolo, usuario=usuario, ip_origen=ip_origen)
+    codigo = 200 if resultado.get("ok") else 400
+    return jsonify(resultado), codigo
 
 
 @app.route("/api/firewall/bloquear_ip", methods=["POST"])
+@requiere_autenticacion
 def api_firewall_bloquear_ip():
-    """Bloquea el tráfico proveniente de una dirección IP atacante."""
+    """Bloquea el tráfico proveniente de una dirección IP atacante con registro de auditoría."""
     datos = request.json or {}
-    ip = datos.get("ip", "").strip()
+    ip = str(datos.get("ip", "")).strip()
+    usuario, ip_origen = obtener_actor_actual()
+
     if not ip:
         return jsonify(ok=False, mensaje="Se requiere indicar la dirección IP."), 400
-    resultado = firewall.bloquear_ip(ip)
-    return jsonify(resultado)
+
+    resultado = firewall.bloquear_ip(ip, usuario=usuario, ip_origen=ip_origen)
+    codigo = 200 if resultado.get("ok") else 400
+    return jsonify(resultado), codigo
 
 
 @app.route("/api/firewall/desbloquear_ip", methods=["POST"])
+@requiere_autenticacion
 def api_firewall_desbloquear_ip():
-    """Elimina la regla de bloqueo para una dirección IP."""
+    """Elimina la regla de bloqueo para una dirección IP documentando el retiro en auditoría."""
     datos = request.json or {}
-    ip = datos.get("ip", "").strip()
+    ip = str(datos.get("ip", "")).strip()
+    usuario, ip_origen = obtener_actor_actual()
+
     if not ip:
         return jsonify(ok=False, mensaje="Se requiere indicar la dirección IP."), 400
-    resultado = firewall.desbloquear_ip(ip)
-    return jsonify(resultado)
+
+    resultado = firewall.desbloquear_ip(ip, usuario=usuario, ip_origen=ip_origen)
+    codigo = 200 if resultado.get("ok") else 400
+    return jsonify(resultado), codigo
 
 
 @app.route("/api/firewall/reglas")
@@ -345,15 +558,26 @@ def api_firewall_reglas():
     return jsonify(firewall.listar_reglas_nids())
 
 
+@app.route("/api/firewall/auditoria")
+def api_firewall_auditoria():
+    """Retorna el historial completo de auditoría de bloqueos y retiros del firewall."""
+    return jsonify(firewall.obtener_auditoria())
+
+
 @app.route("/api/simular_ataque", methods=["POST"])
+@requiere_autenticacion
 def api_simular_ataque():
     """
     Ejecuta una ráfaga controlada de escaneo de puertos de prueba
-    para demostrar en vivo la detección del sistema NIDS.
+    validando previamente la dirección IP de origen simulada.
     """
-    ip = (request.get_json(silent=True) or {}).get("ip", "192.168.1.185")
-    capturador.simular_ataque_escaneo(ip)
-    return jsonify(ok=True, mensaje=f"Ráfaga de escaneo simulada desde {ip}")
+    ip = str((request.get_json(silent=True) or {}).get("ip", "192.168.1.185")).strip()
+    valida, res_ip = firewall.validar_ip(ip)
+    if not valida:
+        return jsonify(ok=False, mensaje=f"Dirección IP no válida para simulación: {res_ip}"), 400
+
+    capturador.simular_ataque_escaneo(res_ip)
+    return jsonify(ok=True, mensaje=f"Ráfaga de escaneo simulada desde {res_ip}")
 
 
 if __name__ == "__main__":
